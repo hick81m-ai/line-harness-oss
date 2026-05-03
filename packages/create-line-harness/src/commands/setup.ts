@@ -1,7 +1,9 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { checkDeps } from "../steps/check-deps.js";
 import { ensureAuth, getAccountId } from "../steps/auth.js";
 import { promptLineCredentials } from "../steps/prompt.js";
@@ -460,136 +462,94 @@ async function runSetupInner(
     p.log.success("シークレット: 設定済み");
   }
 
-  // Step 12: Register LINE account in DB
-  // The Worker may not be reachable for a few seconds right after deploy,
-  // so we retry. We also DO NOT mark this step as done unless the row was
-  // actually created — otherwise users get stuck without an account row
-  // and have to register manually from the dashboard.
+  // Step 12: Register LINE account in DB.
+  // We INSERT directly via `wrangler d1 execute` instead of POSTing to
+  // /api/line-accounts. The CLI is already authenticated against the user's
+  // Cloudflare account and has wrangler, so going through the Worker would
+  // only add a DNS-propagation race (new workers.dev subdomains take a few
+  // minutes to resolve) for no real benefit. Direct SQL is also idempotent
+  // via ON CONFLICT(channel_id), preserving any name the operator may have
+  // set later in the dashboard.
   if (!isDone(state, "lineAccount")) {
     const s = p.spinner();
     s.start("LINE アカウント登録中...");
+    // Two separate temp files so we can clean each one immediately and never
+    // hold both plaintext credentials on disk simultaneously.
+    const insertSqlFile = join(tmpdir(), `clh-line-account-${randomUUID()}.sql`);
+    const loginSqlFile = join(tmpdir(), `clh-line-login-${randomUUID()}.sql`);
+    const q = (val: string) => `'${val.replace(/'/g, "''")}'`;
+    let insertErr: unknown = null;
 
-    const MAX_ATTEMPTS = 5;
-    const RETRY_DELAY_MS = 5000;
-    let lastError: string | null = null;
-    let succeeded = false;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const id = randomUUID();
+      // Use the same timestamp format the rest of the app writes via jstNow()
+      // — ISO 8601 with an explicit '+09:00' suffix. Relying on table defaults
+      // or raw strftime(...) drops the timezone marker, which makes the row
+      // sort inconsistently with rows written by the worker.
+      const jstNowStr =
+        new Date(Date.now() + 9 * 60 * 60_000).toISOString().slice(0, -1) + "+09:00";
+      // Step A (required): upsert the core row using only the columns that
+      // exist in every shipped schema version. login_channel_id was added in
+      // a later migration, so we update it separately as best-effort to keep
+      // the CLI working against older databases that resumed an old install.
+      const insertSql = `
+INSERT INTO line_accounts (id, channel_id, name, channel_access_token, channel_secret, is_active, created_at, updated_at)
+VALUES (${q(id)}, ${q(state.lineChannelId!)}, ${q("LINE Harness")}, ${q(state.lineChannelAccessToken!)}, ${q(state.lineChannelSecret!)}, 1, ${q(jstNowStr)}, ${q(jstNowStr)})
+ON CONFLICT(channel_id) DO UPDATE SET
+  channel_access_token = excluded.channel_access_token,
+  channel_secret = excluded.channel_secret,
+  updated_at = ${q(jstNowStr)};
+`;
+      // Restrict to the owner — os.tmpdir() can be a shared directory
+      // (Linux /tmp), and the file holds plaintext channel secrets.
+      writeFileSync(insertSqlFile, insertSql, { mode: 0o600 });
       try {
-        const res = await fetch(`${state.workerUrl}/api/line-accounts`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${state.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: "LINE Harness",
-            channelId: state.lineChannelId,
-            channelAccessToken: state.lineChannelAccessToken,
-            channelSecret: state.lineChannelSecret,
-          }),
-        });
-        if (res.ok) {
-          succeeded = true;
-          break;
-        }
-        // 409 = duplicate channelId. The row exists, but the credentials
-        // we just collected may be newer (token rotation, manual edit).
-        // Sync them via PUT so we don't leave stale tokens in the DB.
-        // Critically: only mark this attempt successful if the sync itself
-        // succeeds — silently advancing on PUT failure would leave the user
-        // with stale credentials and a green checkmark.
-        if (res.status === 409) {
-          let putErr: string | null = null;
-          try {
-            const listRes = await fetch(`${state.workerUrl}/api/line-accounts`, {
-              headers: { Authorization: `Bearer ${state.apiKey}` },
-            });
-            if (!listRes.ok) {
-              putErr = `account list lookup failed: HTTP ${listRes.status}`;
-            } else {
-              const listData = (await listRes.json()) as {
-                data?: Array<{ id: string; channelId: string }>;
-              };
-              const existing = (listData.data ?? []).find(
-                (a) => a.channelId === state.lineChannelId,
-              );
-              if (!existing) {
-                putErr = "channelId reported duplicate but list lookup did not find it";
-              } else {
-                const putRes = await fetch(
-                  `${state.workerUrl}/api/line-accounts/${existing.id}`,
-                  {
-                    method: "PUT",
-                    headers: {
-                      Authorization: `Bearer ${state.apiKey}`,
-                      "Content-Type": "application/json",
-                    },
-                    // Intentionally do NOT send `name` — preserve whatever
-                    // label the operator assigned in the dashboard.
-                    body: JSON.stringify({
-                      channelAccessToken: state.lineChannelAccessToken,
-                      channelSecret: state.lineChannelSecret,
-                    }),
-                  },
-                );
-                if (!putRes.ok) {
-                  putErr = `credential sync PUT failed: HTTP ${putRes.status}`;
-                }
-              }
-            }
-          } catch (err) {
-            putErr = err instanceof Error ? err.message : String(err);
-          }
-          if (!putErr) {
-            succeeded = true;
-            break;
-          }
-          // Sync failed — preserve the specific putErr instead of letting
-          // the generic "HTTP 409" branch below overwrite it. Skip to the
-          // next attempt directly so the retry loop reports the real cause
-          // (list lookup or PUT failure) when retries are exhausted.
-          lastError = putErr;
-          if (attempt < MAX_ATTEMPTS) {
-            s.message(`LINE アカウント登録 リトライ (${attempt}/${MAX_ATTEMPTS - 1})...`);
-            await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-          }
-          continue;
-        }
-        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        lastError = `HTTP ${res.status}: ${String(data.error ?? "unknown")}`;
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
+        await wrangler([
+          "d1",
+          "execute",
+          state.d1DatabaseName!,
+          "--remote",
+          "--file",
+          insertSqlFile,
+        ]);
+      } finally {
+        // Remove the secrets-bearing file before any further work (including
+        // a possible exit). Don't wait for an outer finally that exit() skips.
+        try { rmSync(insertSqlFile, { force: true }); } catch { /* best-effort */ }
       }
-      if (attempt < MAX_ATTEMPTS) {
-        s.message(`LINE アカウント登録 リトライ (${attempt}/${MAX_ATTEMPTS - 1})...`);
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-      }
+    } catch (err) {
+      insertErr = err;
     }
 
-    if (!succeeded) {
-      s.stop(`LINE アカウント登録に失敗: ${lastError ?? "unknown error"}`);
-      // Do NOT markDone — re-run will retry. Surface the failure so the user
-      // knows they should re-run instead of registering manually from the UI.
+    if (insertErr) {
+      s.stop(`LINE アカウント登録に失敗: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`);
       p.log.error(
-        `自動登録できませんでした。Worker のヘルスを確認してから 'npx create-line-harness@latest' を再実行してください。`,
+        `D1 への直接書き込みに失敗しました。'npx create-line-harness@latest' を再実行してください。`,
       );
       saveState(repoDir, state);
       process.exit(1);
     }
 
-    // Set login_channel_id (not supported by API, update DB directly)
+    // Step B (best-effort): set login_channel_id. May fail on older
+    // schemas that don't have the column — that's fine, the dashboard
+    // can set it later.
     try {
-      await wrangler([
-        "d1",
-        "execute",
-        state.d1DatabaseName!,
-        "--remote",
-        "--command",
-        `UPDATE line_accounts SET login_channel_id = '${state.lineLoginChannelId}' WHERE channel_id = '${state.lineChannelId}'`,
-      ]);
+      const loginSql = `UPDATE line_accounts SET login_channel_id = ${q(state.lineLoginChannelId!)} WHERE channel_id = ${q(state.lineChannelId!)};`;
+      writeFileSync(loginSqlFile, loginSql, { mode: 0o600 });
+      try {
+        await wrangler([
+          "d1",
+          "execute",
+          state.d1DatabaseName!,
+          "--remote",
+          "--file",
+          loginSqlFile,
+        ]);
+      } finally {
+        try { rmSync(loginSqlFile, { force: true }); } catch { /* best-effort */ }
+      }
     } catch {
-      // Non-critical — login_channel_id can be set later via dashboard.
+      // Non-critical — login_channel_id can be set from the dashboard.
     }
 
     s.stop("LINE アカウント登録完了");
