@@ -20,7 +20,7 @@ jobs:
       - run: pnpm --filter liff build
         env:
           VITE_WORKER_URL: https://line-harness.line-harness-hiyo.workers.dev
-          VITE_LIFF_ID: ${{ vars.VITE_LIFF_ID }}
+          VITE_DEFAULT_LIFF_ID: ${{ vars.VITE_DEFAULT_LIFF_ID }}
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
