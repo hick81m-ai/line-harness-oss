@@ -1,10 +1,21 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import Booking from './pages/Booking.js';
 import BookingHistory from './pages/BookingHistory.js';
 import Event from './pages/Event.js';
 import EventConfirm from './pages/EventConfirm.js';
 import EventDone from './pages/EventDone.js';
 import EventBookings from './pages/EventBookings.js';
+import Form from './pages/Form.js';
+
+function RootRedirect() {
+  const [searchParams] = useSearchParams();
+  const page = searchParams.get('page');
+  const id = searchParams.get('id');
+  if (page === 'form' && id) {
+    return <Navigate to={`/form?id=${id}`} replace />;
+  }
+  return <Navigate to="/booking" replace />;
+}
 
 export default function App() {
   return (
@@ -15,7 +26,8 @@ export default function App() {
       <Route path="/events/:id/confirm" element={<EventConfirm />} />
       <Route path="/events/:id/done" element={<EventDone />} />
       <Route path="/events/:id" element={<Event />} />
-      <Route path="/" element={<Navigate to="/booking" replace />} />
+      <Route path="/form" element={<Form />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route
         path="*"
         element={
