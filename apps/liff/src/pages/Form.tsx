@@ -1,96 +1,261 @@
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
 import { getIdToken, getLineUserId } from '../lib/liff-auth.js';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
+const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57';
+
+const SYMPTOMS = [
+  '電源が入らない',
+  '充電ができない',
+  '温かくならない',
+  '振動がない/弱い',
+  'ベルトの空気が入らない',
+  '左右差がある',
+  '異音がする',
+  '破損・傷がある',
+  'その他',
+];
 
 export default function Form() {
-  const [searchParams] = useSearchParams();
-  const formId = searchParams.get('id');
-  const [form, setForm] = useState<any>(null);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [serialNumber, setSerialNumber] = useState('');
+  const [memberId, setMemberId] = useState('');
+  const [symptoms, setSymptoms] = useState<string[]>([]);
+  const [otherText, setOtherText] = useState('');
+  const [files, setFiles] = useState<FileList | null>(null);
+  const [postalCode, setPostalCode] = useState('');
+  const [address, setAddress] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [phone, setPhone] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!formId) return;
-    fetch(`${BASE}/api/forms/${formId}`)
-      .then(r => r.json())
-      .then(d => { if (d.success) setForm(d.data); });
-  }, [formId]);
+  function toggleSymptom(s: string) {
+    setSymptoms(prev =>
+      prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]
+    );
+  }
 
   async function handleSubmit() {
+    if (!serialNumber.trim()) { setError('シリアル番号を入力してください'); return; }
+    if (!memberId.trim()) { setError('会員ID/名前を入力してください'); return; }
+    if (symptoms.length === 0) { setError('故障症状を1つ以上選択してください'); return; }
+    if (symptoms.includes('その他') && !otherText.trim()) {
+      setError('「その他」の内容を入力してください'); return;
+    }
+    if (!postalCode.trim()) { setError('郵便番号を入力してください'); return; }
+    if (!address.trim()) { setError('住所を入力してください'); return; }
+    if (!recipientName.trim()) { setError('宛名を入力してください'); return; }
+    if (!phone.trim()) { setError('電話番号を入力してください'); return; }
+
     setLoading(true);
     setError('');
+
     try {
-      const res = await fetch(`${BASE}/api/forms/${formId}/submit`, {
+      const symptomText = symptoms.includes('その他')
+        ? [...symptoms.filter(s => s !== 'その他'), `その他: ${otherText}`].join(', ')
+        : symptoms.join(', ');
+
+      let imageUrl = '';
+      if (files && files.length > 0) {
+        const formData = new FormData();
+        formData.append('file', files[0]);
+        try {
+          const uploadRes = await fetch(`${BASE}/api/images/upload`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${getIdToken()}` },
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            imageUrl = uploadData.data?.url ?? '';
+          }
+        } catch { /* 画像アップロード失敗は無視 */ }
+      }
+
+      const res = await fetch(`${BASE}/api/forms/${FORM_ID}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           lineUserId: getLineUserId(),
           idToken: getIdToken(),
-          responses: values,
+          responses: {
+            product_name: 'Shaken',
+            serial_number: serialNumber,
+            member_id: memberId,
+            failure_description: symptomText + (imageUrl ? `\n画像: ${imageUrl}` : ''),
+            postal_code: postalCode,
+            address: address,
+            recipient_name: recipientName,
+            phone: phone,
+          },
         }),
       });
+
       const data = await res.json();
       if (data.success) {
         setSubmitted(true);
       } else {
         setError(data.error || '送信に失敗しました');
       }
-    } catch (e) {
+    } catch {
       setError('送信に失敗しました');
     }
     setLoading(false);
   }
 
-  if (!formId) return <div className="p-8 text-red-500">フォームIDが指定されていません</div>;
-  if (!form) return <div className="p-8 text-gray-500">読み込み中...</div>;
-
   if (submitted) return (
     <div className="p-8 text-center">
-      <div className="text-4xl mb-4">✅</div>
+      <div className="text-5xl mb-4">✅</div>
       <h2 className="text-xl font-bold text-green-600 mb-2">送信完了しました</h2>
-      <p className="text-gray-500">お問い合わせありがとうございます。担当者よりご連絡いたします。</p>
+      <p className="text-gray-500 text-sm">お問い合わせありがとうございます。<br />担当者よりご連絡いたします。</p>
     </div>
   );
 
   return (
-    <div className="p-6 max-w-lg mx-auto">
-      <h1 className="text-xl font-bold mb-6">{form.name}</h1>
-      <div className="space-y-4">
-        {form.fields.map((field: any) => (
-          <div key={field.name}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              {field.label}{field.required && <span className="text-red-500 ml-1">*</span>}
-            </label>
-            {field.description && (
-              <p className="text-xs text-gray-500 mb-1">{field.description}</p>
-            )}
-            {field.type === 'textarea' ? (
-              <textarea
-                className="w-full border border-gray-300 rounded-lg p-3 text-sm"
-                rows={4}
-                value={values[field.name] || ''}
-                onChange={e => setValues({ ...values, [field.name]: e.target.value })}
-              />
-            ) : (
+    <div className="p-6 max-w-lg mx-auto pb-12">
+
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+        <p className="text-sm text-yellow-800">⚠️ こちらはShaken専用の故障申し込みフォームです。</p>
+      </div>
+
+      <h1 className="text-xl font-bold mb-6">故障/破損商品確認依頼</h1>
+
+      <div className="space-y-5">
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">故障製品</label>
+          <div className="w-full border border-gray-200 rounded-lg p-3 text-sm bg-gray-50 text-gray-500">Shaken</div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            機器のシリアル番号 <span className="text-red-500">*</span>
+          </label>
+          <p className="text-xs text-gray-500 mb-1">故障機本体にございますシリアル番号のお写真もあわせてご提出ください</p>
+          <input
+            type="text"
+            className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+            value={serialNumber}
+            onChange={e => setSerialNumber(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            故障機ご購入いただいた会員ID/名前 <span className="text-red-500">*</span>
+          </label>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-2">
+            <p className="text-xs text-red-700">⚠️ 会員IDは必ずご購入いただいた会員IDを記入してください。IDが異なる場合は対応できません。</p>
+          </div>
+          <input
+            type="text"
+            className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+            value={memberId}
+            onChange={e => setMemberId(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            故障症状 <span className="text-red-500">*</span>
+          </label>
+          <div className="space-y-2">
+            {SYMPTOMS.map(s => (
+              <label key={s} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={symptoms.includes(s)}
+                  onChange={() => toggleSymptom(s)}
+                  className="w-4 h-4 accent-green-500"
+                />
+                <span className="text-sm">{s}</span>
+              </label>
+            ))}
+          </div>
+          {symptoms.includes('その他') && (
+            <textarea
+              className="mt-2 w-full border border-gray-300 rounded-lg p-3 text-sm"
+              rows={3}
+              placeholder="その他の症状を入力してください"
+              value={otherText}
+              onChange={e => setOtherText(e.target.value)}
+            />
+          )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">画像/動画</label>
+          <input
+            type="file"
+            accept="image/*,video/*"
+            className="w-full text-sm text-gray-500"
+            onChange={e => setFiles(e.target.files)}
+          />
+        </div>
+
+        <div className="border-t pt-5">
+          <h2 className="text-base font-bold mb-4">配送先住所情報</h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                郵便番号 <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 className="w-full border border-gray-300 rounded-lg p-3 text-sm"
-                value={values[field.name] || ''}
-                onChange={e => setValues({ ...values, [field.name]: e.target.value })}
+                placeholder="例：123-4567"
+                value={postalCode}
+                onChange={e => setPostalCode(e.target.value)}
               />
-            )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                住所 <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+                placeholder="例：東京都渋谷区〇〇1-2-3"
+                value={address}
+                onChange={e => setAddress(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                宛名 <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+                placeholder="例：山田 太郎"
+                value={recipientName}
+                onChange={e => setRecipientName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                電話番号 <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="tel"
+                className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+                placeholder="例：090-1234-5678"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+              />
+            </div>
           </div>
-        ))}
+        </div>
+
       </div>
+
       {error && <p className="text-red-500 text-sm mt-4">{error}</p>}
+
       <button
         onClick={handleSubmit}
         disabled={loading}
-        className="mt-6 w-full bg-green-500 text-white py-3 rounded-lg font-bold text-sm disabled:opacity-50"
+        className="mt-6 w-full bg-green-500 text-white py-4 rounded-lg font-bold text-sm disabled:opacity-50"
       >
         {loading ? '送信中...' : '送信する'}
       </button>
