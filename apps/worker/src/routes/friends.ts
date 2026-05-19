@@ -593,4 +593,85 @@ friends.post('/api/friends/:id/messages', async (c) => {
   }
 });
 
+// POST /api/friends/import - 既存友達の一括インポート
+friends.post('/api/friends/import', async (c) => {
+  try {
+    const db = c.env.DB;
+    const accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+
+    let start: string | undefined = undefined;
+    let totalFetched = 0;
+    let totalImported = 0;
+    let totalSkipped = 0;
+
+    while (true) {
+      const url = `https://api.line.me/v2/bot/followers/ids?count=1000${start ? `&start=${start}` : ''}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        return c.json({ success: false, error: `LINE API error: ${err}` }, 500);
+      }
+
+      const data = await res.json<{ userIds: string[]; next?: string }>();
+      const userIds = data.userIds ?? [];
+      totalFetched += userIds.length;
+
+      for (const userId of userIds) {
+        const existing = await db
+          .prepare('SELECT id FROM friends WHERE line_user_id = ?')
+          .bind(userId)
+          .first();
+
+        if (existing) {
+          totalSkipped++;
+          continue;
+        }
+
+        const profileRes = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        const profile = profileRes.ok
+          ? await profileRes.json<{ displayName?: string; pictureUrl?: string; statusMessage?: string }>()
+          : {};
+
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+
+        await db
+          .prepare(
+            `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, metadata, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 1, '{}', ?, ?)`,
+          )
+          .bind(
+            id,
+            userId,
+            profile.displayName ?? userId,
+            profile.pictureUrl ?? null,
+            profile.statusMessage ?? null,
+            now,
+            now,
+          )
+          .run();
+
+        totalImported++;
+      }
+
+      if (!data.next) break;
+      start = data.next;
+    }
+
+    return c.json({
+      success: true,
+      data: { totalFetched, totalImported, totalSkipped },
+    });
+  } catch (err) {
+    console.error('POST /api/friends/import error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 export { friends };
