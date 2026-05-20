@@ -36,14 +36,21 @@ const SYMPTOM_MESSAGES: Record<string, string> = {
   '破損・傷がある': '破損・傷がある症状の場合、破損箇所がわかる写真をお送りください。',
 };
 
-function getSymptomMessage(failureDescription: string): string {
+function getSymptomMessages(failureDescription: string): string[] {
+  const messages: string[] = [];
+  const seen = new Set<string>();
   for (const [symptom, message] of Object.entries(SYMPTOM_MESSAGES)) {
-    if (failureDescription.includes(symptom)) {
-      return message;
+    if (failureDescription.includes(symptom) && !seen.has(message)) {
+      messages.push(message);
+      seen.add(message);
     }
   }
-  return '症状がわかる動画または写真をお送りください。';
+  if (messages.length === 0) {
+    messages.push('症状がわかる動画または写真をお送りください。');
+  }
+  return messages;
 }
+
 // ────────────────────────────────────────────────────────────────
 
 function serializeForm(
@@ -414,31 +421,37 @@ forms.post('/api/forms/:id/submit', async (c) => {
           const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin);
           messages.push(buildMessage(form.on_submit_message_type, expanded));
         } else {
-          // ─── 故障申請受付完了メッセージ ───────────────────────────
-          const responses = submissionData as Record<string, unknown>;
-          const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
-          const failureDesc = String(responses.failure_description ?? '');
-          const symptomGuide = getSymptomMessage(failureDesc);
+// ─── 故障申請受付完了メッセージ ───────────────────────────
+const responses = submissionData as Record<string, unknown>;
+const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
+const failureDesc = String(responses.failure_description ?? '');
+const symptomGuides = getSymptomMessages(failureDesc);
 
-          const confirmText = [
-            '【故障申請受付完了】',
-            `受付番号：${receiptNo}`,
-            '',
-            '以下の内容で受け付けました。',
-            `・製品：${responses.product_name ?? 'Shaken'}`,
-            `・シリアル番号：${responses.serial_number ?? '-'}`,
-            `・症状：${failureDesc || '-'}`,
-            '',
-            '故障症状に合わせた動画の撮影をお願いしております。',
-            '動画の撮影が難しい場合はご連絡ください。',
-            '',
-            symptomGuide,
-            '',
-            '動画の撮影方法に関しましては担当者が故障症状を確認した後にご連絡させていただきます。',
-          ].join('\n');
+const confirmText = [
+  '【故障申請受付完了】',
+  `受付番号：${receiptNo}`,
+  '',
+  '以下の内容で受け付けました。',
+  `・製品：${responses.product_name ?? 'Shaken'}`,
+  `・シリアル番号：${responses.serial_number ?? '-'}`,
+  `・症状：${failureDesc || '-'}`,
+  '',
+  '【配送先情報】',
+  `・〒${responses.postal_code ?? '-'}`,
+  `・${responses.address ?? '-'}`,
+  `・宛名：${responses.recipient_name ?? '-'}`,
+  `・電話：${responses.phone ?? '-'}`,
+  '',
+  ...symptomGuides,
+  '',
+  '故障症状に合わせた動画の撮影をお願いしております。',
+  '動画の撮影が難しい場合はご連絡ください。',
+  '',
+  '動画の撮影方法に関しましては担当者が故障症状を確認した後にご連絡させていただきます。',
+].join('\n');
 
-          messages.push(buildMessage('text', confirmText));
-          // ────────────────────────────────────────────────────────
+messages.push(buildMessage('text', confirmText));
+// ────────────────────────────────────────────────────────
         }
 
         await lineClient.pushMessage(friend.line_user_id, messages);
