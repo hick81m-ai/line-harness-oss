@@ -1,32 +1,29 @@
 name: Deploy Pages
-
 on:
-  push:
-    branches: [gh-pages]
   workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/deploy-pages.yml'
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          ref: gh-pages
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web build
+        env:
+          VITE_API_KEY: ${{ vars.VITE_API_KEY }}
+          VITE_WORKER_URL: ${{ vars.VITE_WORKER_URL }}
+      - uses: cloudflare/wrangler-action@v3
         with:
-          path: '.'
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web
+          command: pages deploy dist --project-name=line-harness-admin
