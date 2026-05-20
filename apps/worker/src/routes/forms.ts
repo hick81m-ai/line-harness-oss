@@ -509,7 +509,39 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
             .bind(crypto.randomUUID(), friend.id, payload.messageType, payload.content, sentAt).run();
         }
       })());
+      
+// Googleスプレッドシート記録
+      if (c.env.GAS_WEBHOOK_URL) {
+        sideEffects.push((async () => {
+          try {
+            const responses = submissionData as Record<string, unknown>;
+            const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
+            const friend = friendId ? await getFriendById(c.env.DB, friendId) : null;
+            const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
+            await fetch(c.env.GAS_WEBHOOK_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                receivedAt: now,
+                receiptNo: receiptNo,
+                friendName: friend?.display_name ?? '',
+                memberId: responses.member_id ?? '',
+                memberName: responses.member_name ?? '',
+                serialNumber: responses.serial_number ?? '',
+                failureDescription: responses.failure_description ?? '',
+                postalCode: responses.postal_code ?? '',
+                address: responses.address ?? '',
+                recipientName: responses.recipient_name ?? '',
+                phone: responses.phone ?? '',
+              }),
+            });
+          } catch (e) {
+            console.error('GAS webhook failed:', e);
+          }
+        })());
+      }
+      
       // Telegram通知
       if (c.env.TELEGRAM_BOT_TOKEN && c.env.TELEGRAM_CHAT_ID) {
         sideEffects.push((async () => {
