@@ -599,6 +599,46 @@ forms.post('/api/forms/:id/submit', async (c) => {
         })(),
       );
 
+      // Telegram通知
+      if (c.env.TELEGRAM_BOT_TOKEN && c.env.TELEGRAM_CHAT_ID) {
+        sideEffects.push(
+          (async () => {
+            try {
+              const responses = submissionData as Record<string, unknown>;
+              const receiptNo = `#${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${submission.id.slice(0,6).toUpperCase()}`;
+              const friend = friendId ? await getFriendById(c.env.DB, friendId) : null;
+              const msg = [
+                '🔔 【新規故障申請】',
+                `受付番号：${receiptNo}`,
+                `申請者：${friend?.display_name ?? '不明'}`,
+                '',
+                `製品：${responses.product_name ?? 'Shaken'}`,
+                `シリアル番号：${responses.serial_number ?? '-'}`,
+                `会員ID：${responses.member_id ?? '-'}`,
+                `故障症状：${responses.failure_description ?? '-'}`,
+                '',
+                '【配送先】',
+                `〒${responses.postal_code ?? '-'}`,
+                `${responses.address ?? '-'}`,
+                `宛名：${responses.recipient_name ?? '-'}`,
+                `電話：${responses.phone ?? '-'}`,
+              ].join('\n');
+
+              await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: c.env.TELEGRAM_CHAT_ID,
+                  text: msg,
+                }),
+              });
+            } catch (e) {
+              console.error('Telegram notification failed:', e);
+            }
+          })(),
+        );
+      }
+      
       if (sideEffects.length > 0) {
         const results = await Promise.allSettled(sideEffects);
         for (const r of results) {
