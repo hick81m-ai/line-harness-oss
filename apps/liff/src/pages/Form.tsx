@@ -21,7 +21,6 @@ export default function Form() {
   const [memberId, setMemberId] = useState('');
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [otherText, setOtherText] = useState('');
-  const [files, setFiles] = useState<FileList | null>(null);
   const [postalCode, setPostalCode] = useState('');
   const [address, setAddress] = useState('');
   const [recipientName, setRecipientName] = useState('');
@@ -37,16 +36,21 @@ export default function Form() {
   }
 
   async function handleSubmit() {
-    if (!serialNumber.trim()) { setError('シリアル番号を入力してください'); return; }
-    if (!memberId.trim()) { setError('会員ID/名前を入力してください'); return; }
-    if (symptoms.length === 0) { setError('故障症状を1つ以上選択してください'); return; }
-    if (symptoms.includes('その他') && !otherText.trim()) {
-      setError('「その他」の内容を入力してください'); return;
+    // まとめてバリデーション
+    const errors: string[] = [];
+    if (!serialNumber.trim()) errors.push('機器のシリアル番号');
+    if (!memberId.trim()) errors.push('会員ID/名前');
+    if (symptoms.length === 0) errors.push('故障症状（1つ以上選択）');
+    if (symptoms.includes('その他') && !otherText.trim()) errors.push('その他の症状の詳細');
+    if (!postalCode.trim()) errors.push('郵便番号');
+    if (!address.trim()) errors.push('住所');
+    if (!recipientName.trim()) errors.push('宛名');
+    if (!phone.trim()) errors.push('電話番号');
+
+    if (errors.length > 0) {
+      setError(`以下の項目を入力してください：\n・${errors.join('\n・')}`);
+      return;
     }
-    if (!postalCode.trim()) { setError('郵便番号を入力してください'); return; }
-    if (!address.trim()) { setError('住所を入力してください'); return; }
-    if (!recipientName.trim()) { setError('宛名を入力してください'); return; }
-    if (!phone.trim()) { setError('電話番号を入力してください'); return; }
 
     setLoading(true);
     setError('');
@@ -56,23 +60,6 @@ export default function Form() {
         ? [...symptoms.filter(s => s !== 'その他'), `その他: ${otherText}`].join(', ')
         : symptoms.join(', ');
 
-      let imageUrl = '';
-      if (files && files.length > 0) {
-        const formData = new FormData();
-        formData.append('file', files[0]);
-        try {
-          const uploadRes = await fetch(`${BASE}/api/images/upload`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${getIdToken()}` },
-            body: formData,
-          });
-          if (uploadRes.ok) {
-            const uploadData = await uploadRes.json();
-            imageUrl = uploadData.data?.url ?? '';
-          }
-        } catch { /* 画像アップロード失敗は無視 */ }
-      }
-
       const res = await fetch(`${BASE}/api/forms/${FORM_ID}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -81,13 +68,13 @@ export default function Form() {
           idToken: getIdToken(),
           responses: {
             product_name: 'Shaken',
-            serial_number: serialNumber,
-            member_id: memberId,
-            failure_description: symptomText + (imageUrl ? `\n画像: ${imageUrl}` : ''),
-            postal_code: postalCode,
-            address: address,
-            recipient_name: recipientName,
-            phone: phone,
+            serial_number: serialNumber.trim(),
+            member_id: memberId.trim(),
+            failure_description: symptomText,
+            postal_code: postalCode.trim(),
+            address: address.trim(),
+            recipient_name: recipientName.trim(),
+            phone: phone.trim(),
           },
         }),
       });
@@ -99,7 +86,7 @@ export default function Form() {
         setError(data.error || '送信に失敗しました');
       }
     } catch {
-      setError('送信に失敗しました');
+      setError('通信エラーが発生しました。再度お試しください。');
     }
     setLoading(false);
   }
@@ -132,10 +119,11 @@ export default function Form() {
           <label className="block text-sm font-medium text-gray-700 mb-1">
             機器のシリアル番号 <span className="text-red-500">*</span>
           </label>
-          <p className="text-xs text-gray-500 mb-1">故障機本体にございますシリアル番号のお写真もあわせてご提出ください</p>
+          <p className="text-xs text-gray-500 mb-1">故障機本体にございますシリアル番号をご入力ください</p>
           <input
             type="text"
             className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+            placeholder="例：SK1234567E"
             value={serialNumber}
             onChange={e => setSerialNumber(e.target.value)}
           />
@@ -146,11 +134,12 @@ export default function Form() {
             故障機ご購入いただいた会員ID/名前 <span className="text-red-500">*</span>
           </label>
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-2">
-            <p className="text-xs text-red-700">⚠️ 会員IDは必ずご購入いただいた会員IDを記入してください。IDが異なる場合は対応できません。</p>
+            <p className="text-xs text-red-700">⚠️ 必ずご購入いただいた会員IDを記入してください。IDが異なる場合は対応できません。</p>
           </div>
           <input
             type="text"
             className="w-full border border-gray-300 rounded-lg p-3 text-sm"
+            placeholder="例：EA123456"
             value={memberId}
             onChange={e => setMemberId(e.target.value)}
           />
@@ -158,7 +147,7 @@ export default function Form() {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            故障症状 <span className="text-red-500">*</span>
+            故障症状 <span className="text-red-500">*</span>（複数選択可）
           </label>
           <div className="space-y-2">
             {SYMPTOMS.map(s => (
@@ -182,16 +171,6 @@ export default function Form() {
               onChange={e => setOtherText(e.target.value)}
             />
           )}
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">画像/動画</label>
-          <input
-            type="file"
-            accept="image/*,video/*"
-            className="w-full text-sm text-gray-500"
-            onChange={e => setFiles(e.target.files)}
-          />
         </div>
 
         <div className="border-t pt-5">
@@ -250,7 +229,11 @@ export default function Form() {
 
       </div>
 
-      {error && <p className="text-red-500 text-sm mt-4">{error}</p>}
+      {error && (
+        <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
+          <p className="text-red-600 text-sm whitespace-pre-line">{error}</p>
+        </div>
+      )}
 
       <button
         onClick={handleSubmit}
