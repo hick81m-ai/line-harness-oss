@@ -3,6 +3,7 @@ import { getIdToken, getLineUserId } from '../lib/liff-auth.js';
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57';
+const SERIAL_IMAGE_URL = 'https://i.ibb.co/fdfrJ4tC/Chat-GPT-Image-2026-5-20-19-25-33.png';
 
 const SYMPTOMS = [
   '電源が入らない',
@@ -19,6 +20,7 @@ const SYMPTOMS = [
 export default function Form() {
   const [serialNumber, setSerialNumber] = useState('');
   const [memberId, setMemberId] = useState('');
+  const [memberName, setMemberName] = useState('');
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [otherText, setOtherText] = useState('');
   const [postalCode, setPostalCode] = useState('');
@@ -29,6 +31,7 @@ export default function Form() {
   const [receiptNo, setReceiptNo] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showSerialImage, setShowSerialImage] = useState(false);
 
   function toggleSymptom(s: string) {
     setSymptoms(prev =>
@@ -39,7 +42,8 @@ export default function Form() {
   async function handleSubmit() {
     const errors: string[] = [];
     if (!serialNumber.trim()) errors.push('機器のシリアル番号');
-    if (!memberId.trim()) errors.push('会員ID/名前');
+    if (!memberId.trim()) errors.push('会員ID');
+    if (!memberName.trim()) errors.push('お名前');
     if (symptoms.length === 0) errors.push('故障症状（1つ以上選択）');
     if (symptoms.includes('その他') && !otherText.trim()) errors.push('その他の症状の詳細');
     if (!postalCode.trim()) errors.push('郵便番号');
@@ -70,6 +74,7 @@ export default function Form() {
             product_name: 'Shaken',
             serial_number: serialNumber.trim(),
             member_id: memberId.trim(),
+            member_name: memberName.trim(),
             failure_description: symptomText,
             postal_code: postalCode.trim(),
             address: address.trim(),
@@ -112,27 +117,73 @@ export default function Form() {
         <p className="text-sm text-yellow-800">⚠️ こちらはShaken専用の故障申し込みフォームです。</p>
       </div>
       <h1 className="text-xl font-bold mb-6">故障/破損商品確認依頼</h1>
+
       <div className="space-y-5">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">故障製品</label>
           <div className="w-full border border-gray-200 rounded-lg p-3 text-sm bg-gray-50 text-gray-500">Shaken</div>
         </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             機器のシリアル番号 <span className="text-red-500">*</span>
           </label>
           <p className="text-xs text-gray-500 mb-1">故障機本体にございますシリアル番号をご入力ください</p>
-          <input type="text" inputMode="text" className="w-full border border-gray-300 rounded-lg p-3 text-base" placeholder="例：SK1234567E" value={serialNumber} onChange={e => setSerialNumber(e.target.value)} />
+          <button
+            type="button"
+            onClick={() => setShowSerialImage(!showSerialImage)}
+            className="text-xs text-green-600 underline mb-2 block"
+          >
+            {showSerialImage ? '▲ シリアル番号の場所を隠す' : '▼ シリアル番号の場所を確認する'}
+          </button>
+          {showSerialImage && (
+            <img
+              src={SERIAL_IMAGE_URL}
+              alt="シリアル番号の場所について"
+              className="w-full rounded-lg mb-2 border border-gray-200"
+            />
+          )}
+          <input
+            type="text"
+            inputMode="text"
+            className="w-full border border-gray-300 rounded-lg p-3 text-base"
+            placeholder="例：SK1234567890"
+            value={serialNumber}
+            onChange={e => setSerialNumber(e.target.value)}
+          />
         </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            故障機ご購入いただいた会員ID/名前 <span className="text-red-500">*</span>
+            故障機ご購入いただいた会員ID <span className="text-red-500">*</span>
           </label>
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-2">
             <p className="text-xs text-red-700">⚠️ 必ずご購入いただいた会員IDを記入してください。IDが異なる場合は対応できません。</p>
           </div>
-          <input type="text" inputMode="text" className="w-full border border-gray-300 rounded-lg p-3 text-base" placeholder="例：EA123456" value={memberId} onChange={e => setMemberId(e.target.value)} />
+          <input
+            type="text"
+            inputMode="text"
+            className="w-full border border-gray-300 rounded-lg p-3 text-base"
+            placeholder="例：EA123456"
+            value={memberId}
+            onChange={e => setMemberId(e.target.value)}
+          />
         </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            お名前 <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            inputMode="text"
+            className="w-full border border-gray-300 rounded-lg p-3 text-base"
+            placeholder="例：山田 太郎"
+            value={memberName}
+            onChange={e => setMemberName(e.target.value)}
+          />
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             故障症状 <span className="text-red-500">*</span>（複数選択可）
@@ -140,15 +191,27 @@ export default function Form() {
           <div className="space-y-2">
             {SYMPTOMS.map(s => (
               <label key={s} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer">
-                <input type="checkbox" checked={symptoms.includes(s)} onChange={() => toggleSymptom(s)} className="w-4 h-4 accent-green-500" />
+                <input
+                  type="checkbox"
+                  checked={symptoms.includes(s)}
+                  onChange={() => toggleSymptom(s)}
+                  className="w-4 h-4 accent-green-500"
+                />
                 <span className="text-sm">{s}</span>
               </label>
             ))}
           </div>
           {symptoms.includes('その他') && (
-            <textarea className="mt-2 w-full border border-gray-300 rounded-lg p-3 text-base" rows={3} placeholder="その他の症状を入力してください" value={otherText} onChange={e => setOtherText(e.target.value)} />
+            <textarea
+              className="mt-2 w-full border border-gray-300 rounded-lg p-3 text-base"
+              rows={3}
+              placeholder="その他の症状を入力してください"
+              value={otherText}
+              onChange={e => setOtherText(e.target.value)}
+            />
           )}
         </div>
+
         <div className="border-t pt-5">
           <h2 className="text-base font-bold mb-4">配送先住所情報</h2>
           <div className="space-y-4">
@@ -171,12 +234,18 @@ export default function Form() {
           </div>
         </div>
       </div>
+
       {error && (
         <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
           <p className="text-red-600 text-sm whitespace-pre-line">{error}</p>
         </div>
       )}
-      <button onClick={handleSubmit} disabled={loading} className="mt-6 w-full bg-green-500 text-white py-4 rounded-lg font-bold text-sm disabled:opacity-50">
+
+      <button
+        onClick={handleSubmit}
+        disabled={loading}
+        className="mt-6 w-full bg-green-500 text-white py-4 rounded-lg font-bold text-sm disabled:opacity-50"
+      >
         {loading ? '送信中...' : '送信する'}
       </button>
     </div>
