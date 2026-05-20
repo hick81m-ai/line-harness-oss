@@ -421,36 +421,82 @@ forms.post('/api/forms/:id/submit', async (c) => {
           const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin);
           messages.push(buildMessage(form.on_submit_message_type, expanded));
         } else {
-// ─── 故障申請受付完了メッセージ ───────────────────────────
+
+          // ─── 故障申請受付完了メッセージ ───────────────────────────
 const responses = submissionData as Record<string, unknown>;
 const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
 const failureDesc = String(responses.failure_description ?? '');
 const symptomGuides = getSymptomMessages(failureDesc);
 
-const confirmText = [
-  '【故障申請受付完了】',
-  `受付番号：${receiptNo}`,
-  '',
-  '以下の内容で受け付けました。',
-  `・製品：${responses.product_name ?? 'Shaken'}`,
-  `・シリアル番号：${responses.serial_number ?? '-'}`,
-  `・症状：${failureDesc || '-'}`,
-  '',
-  '【配送先情報】',
-  `・〒${responses.postal_code ?? '-'}`,
-  `・${responses.address ?? '-'}`,
-  `・宛名：${responses.recipient_name ?? '-'}`,
-  `・電話：${responses.phone ?? '-'}`,
-  '',
-  ...symptomGuides,
-  '',
-  '故障症状に合わせた動画の撮影をお願いしております。',
-  '動画の撮影が難しい場合はご連絡ください。',
-  '',
-  '動画の撮影方法に関しましては担当者が故障症状を確認した後にご連絡させていただきます。',
-].join('\n');
+const flexContents = [
+  // 受付番号
+  {
+    type: 'box', layout: 'vertical', margin: 'md',
+    contents: [
+      { type: 'text', text: '受付番号', size: 'xxs', color: '#64748b' },
+      { type: 'text', text: receiptNo, size: 'md', color: '#1e293b', weight: 'bold' },
+    ],
+  },
+  { type: 'separator', margin: 'lg' },
+  // 申請内容
+  {
+    type: 'box', layout: 'vertical', margin: 'lg',
+    contents: [
+      { type: 'text', text: '申請内容', size: 'xs', color: '#64748b', weight: 'bold' },
+      { type: 'text', text: `製品：${responses.product_name ?? 'Shaken'}`, size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+      { type: 'text', text: `シリアル番号：${responses.serial_number ?? '-'}`, size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+      { type: 'text', text: `症状：${failureDesc || '-'}`, size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+    ],
+  },
+  { type: 'separator', margin: 'lg' },
+  // 配送先
+  {
+    type: 'box', layout: 'vertical', margin: 'lg',
+    contents: [
+      { type: 'text', text: '配送先情報', size: 'xs', color: '#64748b', weight: 'bold' },
+      { type: 'text', text: `〒${responses.postal_code ?? '-'}`, size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+      { type: 'text', text: String(responses.address ?? '-'), size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+      { type: 'text', text: `宛名：${responses.recipient_name ?? '-'}`, size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+      { type: 'text', text: `電話：${responses.phone ?? '-'}`, size: 'sm', color: '#1e293b', margin: 'sm', wrap: true },
+    ],
+  },
+  { type: 'separator', margin: 'lg' },
+  // 動画撮影案内
+  {
+    type: 'box', layout: 'vertical', margin: 'lg',
+    contents: [
+      { type: 'text', text: '動画撮影のお願い', size: 'xs', color: '#64748b', weight: 'bold' },
+      ...symptomGuides.map(guide => ({
+        type: 'text' as const, text: `・${guide}`, size: 'sm' as const, color: '#1e293b', margin: 'sm' as const, wrap: true,
+      })),
+      { type: 'text', text: '動画の撮影が難しい場合はご連絡ください。', size: 'sm', color: '#64748b', margin: 'md', wrap: true },
+      { type: 'text', text: '撮影方法は担当者が症状確認後にご連絡いたします。', size: 'sm', color: '#64748b', margin: 'sm', wrap: true },
+    ],
+  },
+];
 
-messages.push(buildMessage('text', confirmText));
+const resultFlex = {
+  type: 'bubble',
+  size: 'giga',
+  header: {
+    type: 'box',
+    layout: 'vertical',
+    contents: [
+      { type: 'text', text: '✅ 故障申請受付完了', size: 'lg', weight: 'bold', color: '#1e293b' },
+      { type: 'text', text: `${friend.display_name || ''}さんの申請を受け付けました`, size: 'xs', color: '#64748b', margin: 'sm' },
+    ],
+    paddingAll: '20px',
+    backgroundColor: '#f0fdf4',
+  },
+  body: {
+    type: 'box',
+    layout: 'vertical',
+    contents: flexContents,
+    paddingAll: '20px',
+  },
+};
+
+messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
 // ────────────────────────────────────────────────────────
         }
 
