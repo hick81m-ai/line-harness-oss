@@ -21,6 +21,31 @@ import type { Env } from '../index.js';
 
 const forms = new Hono<Env>();
 
+// ─── 症状別メッセージ設定 ────────────────────────────────────────
+// 症状ごとに異なるメッセージを設定できます。
+// キー：症状テキスト（部分一致）
+// value：追加メッセージ
+const SYMPTOM_MESSAGES: Record<string, string> = {
+  '電源が入らない': '電源が入らない症状の場合、充電状態・電源ボタンの長押し動作の動画をお送りください。',
+  '充電ができない': '充電ができない症状の場合、充電器接続時の状態を動画でお送りください。',
+  '温かくならない': '温かくならない症状の場合、電源ON後5分経過した状態の動画をお送りください。',
+  '振動がない/弱い': '振動がない/弱い症状の場合、振動モード作動時の状態を動画でお送りください。',
+  'ベルトの空気が入らない': 'ベルトの空気が入らない症状の場合、膨張モード作動時の状態を動画でお送りください。',
+  '左右差がある': '左右差がある症状の場合、両側同時に動作している状態を動画でお送りください。',
+  '異音がする': '異音がする症状の場合、異音が発生している状態を動画でお送りください。',
+  '破損・傷がある': '破損・傷がある症状の場合、破損箇所がわかる写真をお送りください。',
+};
+
+function getSymptomMessage(failureDescription: string): string {
+  for (const [symptom, message] of Object.entries(SYMPTOM_MESSAGES)) {
+    if (failureDescription.includes(symptom)) {
+      return message;
+    }
+  }
+  return '症状がわかる動画または写真をお送りください。';
+}
+// ────────────────────────────────────────────────────────────────
+
 function serializeForm(
   row: DbForm,
   extra?: { lastSubmittedAt?: string | null; usedByAccounts?: FormUsedByAccount[] },
@@ -58,7 +83,6 @@ function serializeSubmission(row: DbFormSubmission & { friend_name?: string | nu
   };
 }
 
-// GET /api/forms — list all forms (with submission stats + delivering accounts)
 forms.get('/api/forms', async (c) => {
   try {
     const items = await getFormsWithStats(c.env.DB);
@@ -77,14 +101,11 @@ forms.get('/api/forms', async (c) => {
   }
 });
 
-// GET /api/forms/:id — get form
 forms.get('/api/forms/:id', async (c) => {
   try {
     const id = c.req.param('id');
     const form = await getFormById(c.env.DB, id);
-    if (!form) {
-      return c.json({ success: false, error: 'Form not found' }, 404);
-    }
+    if (!form) return c.json({ success: false, error: 'Form not found' }, 404);
     return c.json({ success: true, data: serializeForm(form) });
   } catch (err) {
     console.error('GET /api/forms/:id error:', err);
@@ -92,7 +113,6 @@ forms.get('/api/forms/:id', async (c) => {
   }
 });
 
-// POST /api/forms — create form
 forms.post('/api/forms', async (c) => {
   try {
     const body = await c.req.json<{
@@ -108,11 +128,7 @@ forms.post('/api/forms', async (c) => {
       onSubmitWebhookFailMessage?: string | null;
       saveToMetadata?: boolean;
     }>();
-
-    if (!body.name) {
-      return c.json({ success: false, error: 'name is required' }, 400);
-    }
-
+    if (!body.name) return c.json({ success: false, error: 'name is required' }, 400);
     const form = await createForm(c.env.DB, {
       name: body.name,
       description: body.description ?? null,
@@ -126,7 +142,6 @@ forms.post('/api/forms', async (c) => {
       onSubmitWebhookFailMessage: body.onSubmitWebhookFailMessage ?? null,
       saveToMetadata: body.saveToMetadata,
     });
-
     return c.json({ success: true, data: serializeForm(form) }, 201);
   } catch (err) {
     console.error('POST /api/forms error:', err);
@@ -134,7 +149,6 @@ forms.post('/api/forms', async (c) => {
   }
 });
 
-// PUT /api/forms/:id — update form
 forms.put('/api/forms/:id', async (c) => {
   try {
     const id = c.req.param('id');
@@ -152,8 +166,6 @@ forms.put('/api/forms/:id', async (c) => {
       saveToMetadata?: boolean;
       isActive?: boolean;
     }>();
-
-    // Only include fields that were explicitly sent (avoid undefined → null conversion)
     const updates: Record<string, unknown> = {};
     if (body.name !== undefined) updates.name = body.name;
     if (body.description !== undefined) updates.description = body.description;
@@ -167,13 +179,8 @@ forms.put('/api/forms/:id', async (c) => {
     if (body.onSubmitWebhookFailMessage !== undefined) updates.onSubmitWebhookFailMessage = body.onSubmitWebhookFailMessage;
     if (body.saveToMetadata !== undefined) updates.saveToMetadata = body.saveToMetadata;
     if (body.isActive !== undefined) updates.isActive = body.isActive;
-
     const updated = await updateForm(c.env.DB, id, updates as any);
-
-    if (!updated) {
-      return c.json({ success: false, error: 'Form not found' }, 404);
-    }
-
+    if (!updated) return c.json({ success: false, error: 'Form not found' }, 404);
     return c.json({ success: true, data: serializeForm(updated) });
   } catch (err) {
     console.error('PUT /api/forms/:id error:', err);
@@ -181,14 +188,11 @@ forms.put('/api/forms/:id', async (c) => {
   }
 });
 
-// DELETE /api/forms/:id
 forms.delete('/api/forms/:id', async (c) => {
   try {
     const id = c.req.param('id');
     const form = await getFormById(c.env.DB, id);
-    if (!form) {
-      return c.json({ success: false, error: 'Form not found' }, 404);
-    }
+    if (!form) return c.json({ success: false, error: 'Form not found' }, 404);
     await deleteForm(c.env.DB, id);
     return c.json({ success: true, data: null });
   } catch (err) {
@@ -197,14 +201,11 @@ forms.delete('/api/forms/:id', async (c) => {
   }
 });
 
-// GET /api/forms/:id/submissions — list submissions
 forms.get('/api/forms/:id/submissions', async (c) => {
   try {
     const id = c.req.param('id');
     const form = await getFormById(c.env.DB, id);
-    if (!form) {
-      return c.json({ success: false, error: 'Form not found' }, 404);
-    }
+    if (!form) return c.json({ success: false, error: 'Form not found' }, 404);
     const submissions = await getFormSubmissions(c.env.DB, id);
     return c.json({ success: true, data: submissions.map(serializeSubmission) });
   } catch (err) {
@@ -213,63 +214,39 @@ forms.get('/api/forms/:id/submissions', async (c) => {
   }
 });
 
-// POST /api/forms/:id/opened — record form open event (public, used by LIFF)
 forms.post('/api/forms/:id/opened', async (c) => {
   try {
     const formId = c.req.param('id');
     const body = await c.req.json<{ lineUserId?: string; friendId?: string }>();
-    const lineUserId = body.lineUserId;
-    const friendId = body.friendId;
-
-    // Resolve friend
-    let friend = friendId
-      ? await getFriendById(c.env.DB, friendId)
-      : lineUserId
-        ? await getFriendByLineUserId(c.env.DB, lineUserId)
-        : null;
-
-    const now = jstNow();
-    await c.env.DB.prepare(
-      'INSERT INTO form_opens (id, form_id, friend_id, friend_name, opened_at) VALUES (?, ?, ?, ?, ?)',
-    ).bind(
-      crypto.randomUUID(),
-      formId,
-      friend?.id ?? null,
-      friend?.display_name ?? null,
-      now,
-    ).run();
-
-    return c.json({ success: true });
-  } catch (err) {
-    console.error('POST /api/forms/:id/opened error:', err);
-    return c.json({ success: true }); // non-blocking, always succeed
-  }
-});
-
-// POST /api/forms/:id/partial — save survey answers without x_username (public, used by LIFF page 1)
-forms.post('/api/forms/:id/partial', async (c) => {
-  try {
-    const formId = c.req.param('id');
-    const body = await c.req.json<{ lineUserId?: string; friendId?: string; data?: Record<string, unknown> }>();
-
-    // Resolve friend
-    let friend = body.friendId
+    const friend = body.friendId
       ? await getFriendById(c.env.DB, body.friendId)
       : body.lineUserId
         ? await getFriendByLineUserId(c.env.DB, body.lineUserId)
         : null;
+    await c.env.DB.prepare(
+      'INSERT INTO form_opens (id, form_id, friend_id, friend_name, opened_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), formId, friend?.id ?? null, friend?.display_name ?? null, jstNow()).run();
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('POST /api/forms/:id/opened error:', err);
+    return c.json({ success: true });
+  }
+});
 
-    if (!friend) {
-      return c.json({ success: false, error: 'Friend not found' }, 404);
-    }
-
-    // Save survey data to friend metadata (merge with existing)
+forms.post('/api/forms/:id/partial', async (c) => {
+  try {
+    const formId = c.req.param('id');
+    const body = await c.req.json<{ lineUserId?: string; friendId?: string; data?: Record<string, unknown> }>();
+    const friend = body.friendId
+      ? await getFriendById(c.env.DB, body.friendId)
+      : body.lineUserId
+        ? await getFriendByLineUserId(c.env.DB, body.lineUserId)
+        : null;
+    if (!friend) return c.json({ success: false, error: 'Friend not found' }, 404);
     const existingMeta = friend.metadata ? JSON.parse(friend.metadata) : {};
     const merged = { ...existingMeta, ...body.data };
-    await c.env.DB.prepare(
-      'UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?',
-    ).bind(JSON.stringify(merged), jstNow(), friend.id).run();
-
+    await c.env.DB.prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(merged), jstNow(), friend.id).run();
     return c.json({ success: true });
   } catch (err) {
     console.error('POST /api/forms/:id/partial error:', err);
@@ -277,58 +254,41 @@ forms.post('/api/forms/:id/partial', async (c) => {
   }
 });
 
-// POST /api/forms/:id/submit — submit form (public, used by LIFF)
 forms.post('/api/forms/:id/submit', async (c) => {
   try {
     const formId = c.req.param('id');
     const form = await getFormById(c.env.DB, formId);
-    if (!form) {
-      return c.json({ success: false, error: 'Form not found' }, 404);
-    }
-    if (!form.is_active) {
-      return c.json({ success: false, error: 'This form is no longer accepting responses' }, 400);
-    }
+    if (!form) return c.json({ success: false, error: 'Form not found' }, 404);
+    if (!form.is_active) return c.json({ success: false, error: 'This form is no longer accepting responses' }, 400);
 
     const body = await c.req.json<{
       lineUserId?: string;
       friendId?: string;
       data?: Record<string, unknown>;
+      responses?: Record<string, unknown>;
       _skipWebhook?: boolean;
       trackedLinkId?: string;
+      idToken?: string;
     }>();
 
-    const submissionData = body.data ?? {};
+    const submissionData = body.data ?? body.responses ?? {};
 
-    // Validate required fields
-    const fields = JSON.parse(form.fields || '[]') as Array<{
-      name: string;
-      label: string;
-      type: string;
-      required?: boolean;
-    }>;
-
+    const fields = JSON.parse(form.fields || '[]') as Array<{ name: string; label: string; type: string; required?: boolean }>;
     for (const field of fields) {
       if (field.required) {
         const val = submissionData[field.name];
         if (val === undefined || val === null || val === '') {
-          return c.json(
-            { success: false, error: `${field.label} は必須項目です` },
-            400,
-          );
+          return c.json({ success: false, error: `${field.label} は必須項目です` }, 400);
         }
       }
     }
 
-    // Resolve friend by lineUserId or friendId
     let friendId: string | null = body.friendId ?? null;
     if (!friendId && body.lineUserId) {
       const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
-      if (friend) {
-        friendId = friend.id;
-      }
+      if (friend) friendId = friend.id;
     }
 
-    // Webhook gate — skip if client pre-verified via repliers endpoint
     delete submissionData._webhookVerified;
     const skipWebhook = Boolean(body._skipWebhook);
     delete submissionData._skipWebhook;
@@ -337,7 +297,6 @@ forms.post('/api/forms/:id/submit', async (c) => {
       const webhookResult = await callFormWebhook(form, submissionData);
       webhookData = webhookResult.data as Record<string, unknown> | null;
       if (!webhookResult.passed) {
-        // Webhook rejected — send fail message and stop
         if (form.on_submit_webhook_fail_message && friendId) {
           const friend = await getFriendById(c.env.DB, friendId);
           if (friend?.line_user_id) {
@@ -351,162 +310,53 @@ forms.post('/api/forms/:id/submit', async (c) => {
               }
               const lineClient = new LineClient(accessToken);
               await lineClient.pushMessage(friend.line_user_id, [{ type: 'text', text: form.on_submit_webhook_fail_message }]);
-              await c.env.DB
-                .prepare(
-                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-                   VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'auto_reply', ?)`,
-                )
-                .bind(crypto.randomUUID(), friend.id, form.on_submit_webhook_fail_message, jstNow())
-                .run();
-            } catch (e) {
-              console.error('Failed to send webhook fail message:', e);
-            }
+              await c.env.DB.prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'auto_reply', ?)`)
+                .bind(crypto.randomUUID(), friend.id, form.on_submit_webhook_fail_message, jstNow()).run();
+            } catch (e) { console.error('Failed to send webhook fail message:', e); }
           }
         }
-        // Still save the submission for records
-        const submission = await createFormSubmission(c.env.DB, {
-          formId,
-          friendId: friendId || null,
-          data: JSON.stringify({ ...submissionData, _webhookResult: webhookResult.data }),
-        });
+        const submission = await createFormSubmission(c.env.DB, { formId, friendId: friendId || null, data: JSON.stringify({ ...submissionData, _webhookResult: webhookResult.data }) });
         return c.json({ success: true, data: { ...serializeSubmission(submission), webhookPassed: false, webhookData: webhookResult.data } }, 201);
       }
     }
 
-    // Save submission (friendId null if not resolved — avoids FK constraint)
     const submission = await createFormSubmission(c.env.DB, {
       formId,
       friendId: friendId || null,
       data: JSON.stringify(submissionData),
     });
 
-    // Side effects (best-effort, don't fail the request)
     if (friendId) {
       const db = c.env.DB;
       const now = jstNow();
 
-      // Resolve reward template per-campaign.
-      //
-      // Priority:
-      //   1. body.trackedLinkId (= ?ref= from /r/:ref → LIFF → form). This lets
-      //      X Harness campaign settings drive the reward, even for friends who
-      //      were originally added via a different campaign.
-      //   2. Fallback to friends.first_tracked_link_id (first-touch attribution)
-      //      so existing tracked links without ref pass-through still work.
-      //
-      // This OVERRIDES form.on_submit_message_*.
-      //
-      // Note: anti-replay (preventing the same friend from claiming the same
-      // reward twice via URL tampering) is intentionally NOT enforced. The
-      // product is opt-in oriented and the engagement gate handles real
-      // anti-fraud upstream.
       let rewardTemplate: import('@line-crm/db').MessageTemplate | null = null;
       {
         const { getFriendById, getTrackedLinkById, getMessageTemplateById } = await import('@line-crm/db');
         const { resolveRewardTemplate } = await import('../services/reward-resolver.js');
-        rewardTemplate = await resolveRewardTemplate(
-          db,
-          {
-            friendId,
-            requestedTrackedLinkId: body.trackedLinkId ?? null,
-          },
-          { getFriendById, getTrackedLinkById, getMessageTemplateById },
-        );
+        rewardTemplate = await resolveRewardTemplate(db, { friendId, requestedTrackedLinkId: body.trackedLinkId ?? null }, { getFriendById, getTrackedLinkById, getMessageTemplateById });
       }
 
       const sideEffects: Promise<unknown>[] = [];
 
-      // Save response data to friend's metadata
       if (form.save_to_metadata) {
-        sideEffects.push(
-          (async () => {
-            const friend = await getFriendById(db, friendId!);
-            if (!friend) return;
-            const existing = JSON.parse(friend.metadata || '{}') as Record<string, unknown>;
-            const merged = { ...existing, ...submissionData };
-            await db
-              .prepare(`UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?`)
-              .bind(JSON.stringify(merged), now, friendId)
-              .run();
-          })(),
-        );
-      }
-
-      // Add tag
-      if (form.on_submit_tag_id) {
-        sideEffects.push(addTagToFriend(db, friendId, form.on_submit_tag_id));
-      }
-
-      // Enroll in scenario
-      if (form.on_submit_scenario_id) {
-        sideEffects.push(enrollFriendInScenario(db, friendId, form.on_submit_scenario_id));
-      }
-
-      // If webhook returned a join_url (e.g. Meet Harness), send a Flex button to the user
-      if (webhookData?.join_url) {
-        sideEffects.push(
-          (async () => {
-            const friend = await getFriendById(db, friendId!);
-            if (!friend?.line_user_id) return;
-            const { LineClient } = await import('@line-crm/line-sdk');
-            let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
-            if ((friend as unknown as Record<string, unknown>).line_account_id) {
-              const { getLineAccountById } = await import('@line-crm/db');
-              const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
-              if (account) accessToken = account.channel_access_token;
-            }
-            const lineClient = new LineClient(accessToken);
-            const joinUrl = String(webhookData!.join_url);
-            const meetFlex = {
-              type: 'bubble',
-              header: {
-                type: 'box', layout: 'vertical',
-                contents: [
-                  { type: 'text', text: 'ヒアリングの準備ができました', size: 'md', weight: 'bold', color: '#1e293b' },
-                ],
-                paddingAll: '20px', backgroundColor: '#f0f9ff',
-              },
-              body: {
-                type: 'box', layout: 'vertical',
-                contents: [
-                  { type: 'text', text: 'アンケートありがとうございます。続けて短いヒアリングにご協力ください。', size: 'sm', color: '#475569', wrap: true },
-                ],
-                paddingAll: '20px',
-              },
-              footer: {
-                type: 'box', layout: 'vertical',
-                contents: [
-                  {
-                    type: 'button', style: 'primary', color: '#4CAF50',
-                    action: { type: 'uri', label: 'ヒアリングを始める', uri: joinUrl },
-                  },
-                ],
-                paddingAll: '16px',
-              },
-            };
-            await lineClient.pushMessage(friend.line_user_id, [
-              { type: 'flex', altText: 'ヒアリングの準備ができました', contents: meetFlex },
-            ]);
-            await db
-              .prepare(
-                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-                 VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'auto_reply', ?)`,
-              )
-              .bind(crypto.randomUUID(), friend.id, JSON.stringify(meetFlex), jstNow())
-              .run();
-          })(),
-        );
-      }
-
-      // Send confirmation message with submitted data back to user
-      sideEffects.push(
-        (async () => {
-          console.log('Form reply: starting for friendId', friendId);
+        sideEffects.push((async () => {
           const friend = await getFriendById(db, friendId!);
-          if (!friend?.line_user_id) { console.log('Form reply: no line_user_id'); return; }
-          console.log('Form reply: sending to', friend.line_user_id);
+          if (!friend) return;
+          const existing = JSON.parse(friend.metadata || '{}') as Record<string, unknown>;
+          await db.prepare(`UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?`)
+            .bind(JSON.stringify({ ...existing, ...submissionData }), now, friendId).run();
+        })());
+      }
+
+      if (form.on_submit_tag_id) sideEffects.push(addTagToFriend(db, friendId, form.on_submit_tag_id));
+      if (form.on_submit_scenario_id) sideEffects.push(enrollFriendInScenario(db, friendId, form.on_submit_scenario_id));
+
+      if (webhookData?.join_url) {
+        sideEffects.push((async () => {
+          const friend = await getFriendById(db, friendId!);
+          if (!friend?.line_user_id) return;
           const { LineClient } = await import('@line-crm/line-sdk');
-          // Resolve access token from friend's account (multi-account support)
           let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
           if ((friend as unknown as Record<string, unknown>).line_account_id) {
             const { getLineAccountById } = await import('@line-crm/db');
@@ -514,131 +364,125 @@ forms.post('/api/forms/:id/submit', async (c) => {
             if (account) accessToken = account.channel_access_token;
           }
           const lineClient = new LineClient(accessToken);
-          const { buildMessage, expandVariables } = await import('../services/step-delivery.js');
-          const apiOrigin = new URL(c.req.url).origin;
-          const { resolveMetadata } = await import('../services/step-delivery.js');
-          const resolvedMeta = await resolveMetadata(c.env.DB, { user_id: (friend as unknown as Record<string, string | null>).user_id, metadata: (friend as unknown as Record<string, string | null>).metadata });
-          const friendData = {
-            id: friend.id,
-            display_name: friend.display_name,
-            user_id: (friend as unknown as Record<string, string | null>).user_id,
-            ref_code: (friend as unknown as Record<string, string | null>).ref_code,
-            metadata: resolvedMeta,
+          const joinUrl = String(webhookData!.join_url);
+          const meetFlex = {
+            type: 'bubble',
+            header: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'ヒアリングの準備ができました', size: 'md', weight: 'bold', color: '#1e293b' }], paddingAll: '20px', backgroundColor: '#f0f9ff' },
+            body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'アンケートありがとうございます。続けて短いヒアリングにご協力ください。', size: 'sm', color: '#475569', wrap: true }], paddingAll: '20px' },
+            footer: { type: 'box', layout: 'vertical', contents: [{ type: 'button', style: 'primary', color: '#4CAF50', action: { type: 'uri', label: 'ヒアリングを始める', uri: joinUrl } }], paddingAll: '16px' },
           };
+          await lineClient.pushMessage(friend.line_user_id, [{ type: 'flex', altText: 'ヒアリングの準備ができました', contents: meetFlex }]);
+          await db.prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'auto_reply', ?)`)
+            .bind(crypto.randomUUID(), friend.id, JSON.stringify(meetFlex), jstNow()).run();
+        })());
+      }
 
-          // Build diagnostic result Flex card showing their answers
-          const entries = Object.entries(submissionData as Record<string, unknown>);
-          const answerRows = entries.map(([key, value]) => {
-            const field = form.fields ? (JSON.parse(form.fields) as Array<{ name: string; label: string }>).find((f: { name: string }) => f.name === key) : null;
-            const label = field?.label || key;
-            const val = Array.isArray(value) ? value.join(', ') : (value !== null && value !== undefined && value !== '') ? String(value) : '-';
-            return {
-              type: 'box' as const, layout: 'vertical' as const, margin: 'md' as const,
-              contents: [
-                { type: 'text' as const, text: label, size: 'xxs' as const, color: '#64748b' },
-                { type: 'text' as const, text: val, size: 'sm' as const, color: '#1e293b', weight: 'bold' as const, wrap: true },
-              ],
-            };
-          });
+      // 自動返信メッセージ
+      sideEffects.push((async () => {
+        const friend = await getFriendById(db, friendId!);
+        if (!friend?.line_user_id) return;
+        const { LineClient } = await import('@line-crm/line-sdk');
+        let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+        if ((friend as unknown as Record<string, unknown>).line_account_id) {
+          const { getLineAccountById } = await import('@line-crm/db');
+          const account = await getLineAccountById(db, (friend as unknown as Record<string, unknown>).line_account_id as string);
+          if (account) accessToken = account.channel_access_token;
+        }
+        const lineClient = new LineClient(accessToken);
+        const { buildMessage, expandVariables } = await import('../services/step-delivery.js');
+        const { resolveMetadata, messageToLogPayload } = await import('../services/step-delivery.js');
+        const resolvedMeta = await resolveMetadata(c.env.DB, {
+          user_id: (friend as unknown as Record<string, string | null>).user_id,
+          metadata: (friend as unknown as Record<string, string | null>).metadata,
+        });
+        const friendData = {
+          id: friend.id,
+          display_name: friend.display_name,
+          user_id: (friend as unknown as Record<string, string | null>).user_id,
+          ref_code: (friend as unknown as Record<string, string | null>).ref_code,
+          metadata: resolvedMeta,
+        };
+        const apiOrigin = new URL(c.req.url).origin;
+        const { buildRewardMessage } = await import('../services/reward-message.js');
+        const rewardFromTrackedLink = buildRewardMessage(rewardTemplate, friend.display_name);
 
-          const resultFlex = {
-            type: 'bubble', size: 'giga',
-            header: {
-              type: 'box', layout: 'vertical',
-              contents: [
-                { type: 'text', text: '診断結果', size: 'lg', weight: 'bold', color: '#1e293b' },
-                { type: 'text', text: `${friend.display_name || ''}さんの回答`, size: 'xs', color: '#64748b', margin: 'sm' },
-              ],
-              paddingAll: '20px', backgroundColor: '#f0fdf4',
-            },
-            body: {
-              type: 'box', layout: 'vertical',
-              contents: [
-                ...answerRows,
-                { type: 'separator', margin: 'lg' },
-                { type: 'text', text: '他社サービスでは、フォームの回答内容に合わせたリアルタイム返信はできません。LINE Harnessだからこそ可能な体験です。', size: 'xs', color: '#06C755', weight: 'bold', wrap: true, margin: 'lg' },
-              ],
-              paddingAll: '20px',
-            },
-          };
+        const messages: ReturnType<typeof buildMessage>[] = [];
 
-          const messages: ReturnType<typeof buildMessage>[] = [];
+        if (rewardFromTrackedLink) {
+          messages.push(rewardFromTrackedLink as ReturnType<typeof buildMessage>);
+        } else if (form.on_submit_message_type && form.on_submit_message_content) {
+          const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin);
+          messages.push(buildMessage(form.on_submit_message_type, expanded));
+        } else {
+          // ─── 故障申請受付完了メッセージ ───────────────────────────
+          const responses = submissionData as Record<string, unknown>;
+          const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
+          const failureDesc = String(responses.failure_description ?? '');
+          const symptomGuide = getSymptomMessage(failureDesc);
 
-          const { buildRewardMessage } = await import('../services/reward-message.js');
-          const rewardFromTrackedLink = buildRewardMessage(rewardTemplate, friend.display_name);
+          const confirmText = [
+            '【故障申請受付完了】',
+            `受付番号：${receiptNo}`,
+            '',
+            '以下の内容で受け付けました。',
+            `・製品：${responses.product_name ?? 'Shaken'}`,
+            `・シリアル番号：${responses.serial_number ?? '-'}`,
+            `・症状：${failureDesc || '-'}`,
+            '',
+            '故障症状に合わせた動画の撮影をお願いしております。',
+            '動画の撮影が難しい場合はご連絡ください。',
+            '',
+            symptomGuide,
+            '',
+            '動画の撮影方法に関しましては担当者が故障症状を確認した後にご連絡させていただきます。',
+          ].join('\n');
 
-          if (rewardFromTrackedLink) {
-            // Tracked-link reward template overrides everything (per-campaign reward)
-            messages.push(rewardFromTrackedLink as ReturnType<typeof buildMessage>);
-          } else if (form.on_submit_message_type && form.on_submit_message_content) {
-            // Custom form message replaces default diagnostic result
-            const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin);
-            messages.push(buildMessage(form.on_submit_message_type, expanded));
-          } else {
-            // Default: send diagnostic result Flex
-            messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
-          }
+          messages.push(buildMessage('text', confirmText));
+          // ────────────────────────────────────────────────────────
+        }
 
-          await lineClient.pushMessage(friend.line_user_id, messages);
+        await lineClient.pushMessage(friend.line_user_id, messages);
 
-          // Mirror every pushed message into messages_log so the dashboard chat
-          // view stays consistent with what the user actually receives in LINE.
-          // Without this the form's auto-reply is invisible to operators.
-          const { messageToLogPayload } = await import('../services/step-delivery.js');
-          const sentAt = jstNow();
-          for (const m of messages) {
-            const payload = messageToLogPayload(m);
-            await db
-              .prepare(
-                `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at)
-                 VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'auto_reply', ?)`,
-              )
-              .bind(crypto.randomUUID(), friend.id, payload.messageType, payload.content, sentAt)
-              .run();
-          }
-        })(),
-      );
+        const sentAt = jstNow();
+        for (const m of messages) {
+          const payload = messageToLogPayload(m);
+          await db.prepare(`INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'auto_reply', ?)`)
+            .bind(crypto.randomUUID(), friend.id, payload.messageType, payload.content, sentAt).run();
+        }
+      })());
 
       // Telegram通知
       if (c.env.TELEGRAM_BOT_TOKEN && c.env.TELEGRAM_CHAT_ID) {
-        sideEffects.push(
-          (async () => {
-            try {
-              const responses = submissionData as Record<string, unknown>;
-              const receiptNo = `#${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${submission.id.slice(0,6).toUpperCase()}`;
-              const friend = friendId ? await getFriendById(c.env.DB, friendId) : null;
-              const msg = [
-                '🔔 【新規故障申請】',
-                `受付番号：${receiptNo}`,
-                `申請者：${friend?.display_name ?? '不明'}`,
-                '',
-                `製品：${responses.product_name ?? 'Shaken'}`,
-                `シリアル番号：${responses.serial_number ?? '-'}`,
-                `会員ID：${responses.member_id ?? '-'}`,
-                `故障症状：${responses.failure_description ?? '-'}`,
-                '',
-                '【配送先】',
-                `〒${responses.postal_code ?? '-'}`,
-                `${responses.address ?? '-'}`,
-                `宛名：${responses.recipient_name ?? '-'}`,
-                `電話：${responses.phone ?? '-'}`,
-              ].join('\n');
-
-              await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: c.env.TELEGRAM_CHAT_ID,
-                  text: msg,
-                }),
-              });
-            } catch (e) {
-              console.error('Telegram notification failed:', e);
-            }
-          })(),
-        );
+        sideEffects.push((async () => {
+          try {
+            const responses = submissionData as Record<string, unknown>;
+            const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
+            const friend = friendId ? await getFriendById(c.env.DB, friendId) : null;
+            const msg = [
+              '🔔 【新規故障申請】',
+              `受付番号：${receiptNo}`,
+              `申請者：${friend?.display_name ?? '不明'}`,
+              '',
+              `製品：${responses.product_name ?? 'Shaken'}`,
+              `シリアル番号：${responses.serial_number ?? '-'}`,
+              `会員ID：${responses.member_id ?? '-'}`,
+              `故障症状：${responses.failure_description ?? '-'}`,
+              '',
+              '【配送先】',
+              `〒${responses.postal_code ?? '-'}`,
+              `${responses.address ?? '-'}`,
+              `宛名：${responses.recipient_name ?? '-'}`,
+              `電話：${responses.phone ?? '-'}`,
+            ].join('\n');
+            await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: c.env.TELEGRAM_CHAT_ID, text: msg }),
+            });
+          } catch (e) { console.error('Telegram notification failed:', e); }
+        })());
       }
-      
+
       if (sideEffects.length > 0) {
         const results = await Promise.allSettled(sideEffects);
         for (const r of results) {
@@ -654,47 +498,24 @@ forms.post('/api/forms/:id/submit', async (c) => {
   }
 });
 
-async function callFormWebhook(
-  form: DbForm,
-  submissionData: Record<string, unknown>,
-): Promise<{ passed: boolean; data: unknown }> {
+async function callFormWebhook(form: DbForm, submissionData: Record<string, unknown>): Promise<{ passed: boolean; data: unknown }> {
   if (!form.on_submit_webhook_url) return { passed: true, data: null };
-
   try {
-    // Replace {field_name} placeholders in URL with submitted values
     let url = form.on_submit_webhook_url;
     for (const [key, value] of Object.entries(submissionData)) {
       url = url.replace(`{${key}}`, encodeURIComponent(String(value ?? '')));
     }
-
-    // Parse headers
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (form.on_submit_webhook_headers) {
-      try {
-        const parsed = JSON.parse(form.on_submit_webhook_headers) as Record<string, string>;
-        Object.assign(headers, parsed);
-      } catch { /* ignore invalid headers */ }
+      try { Object.assign(headers, JSON.parse(form.on_submit_webhook_headers)); } catch { /* ignore */ }
     }
-
-    // Determine method: GET if URL has {placeholders} replaced, POST otherwise
     const isGet = form.on_submit_webhook_url.includes('{');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(url, {
-      method: isGet ? 'GET' : 'POST',
-      headers,
-      signal: controller.signal,
-      ...(isGet ? {} : { body: JSON.stringify(submissionData) }),
-    });
+    const res = await fetch(url, { method: isGet ? 'GET' : 'POST', headers, signal: controller.signal, ...(isGet ? {} : { body: JSON.stringify(submissionData) }) });
     clearTimeout(timeout);
-
-    if (!res.ok) {
-      return { passed: false, data: { error: `HTTP ${res.status}` } };
-    }
-
+    if (!res.ok) return { passed: false, data: { error: `HTTP ${res.status}` } };
     const data = await res.json() as Record<string, unknown>;
-
-    // Check for eligibility — support both { eligible: bool } and { success: bool, data: { eligible: bool } }
     const eligible = data.eligible ?? (data.data as Record<string, unknown> | undefined)?.eligible ?? data.success;
     return { passed: Boolean(eligible), data };
   } catch (err) {
