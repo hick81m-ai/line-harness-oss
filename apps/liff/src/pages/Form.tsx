@@ -249,8 +249,7 @@ export default function Form() {
         </div>
 
       </div>{/* space-y-5 終わり */}
-        </div>
-      </div>
+
 
       {error && (
         <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
