@@ -27,6 +27,7 @@ export default function Form() {
   const [address, setAddress] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [phone, setPhone] = useState('');
+  const [remarks, setRemarks] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [receiptNo, setReceiptNo] = useState('');
   const [error, setError] = useState('');
@@ -80,6 +81,7 @@ export default function Form() {
             address: address.trim(),
             recipient_name: recipientName.trim(),
             phone: phone.trim(),
+            remarks: remarks.trim(),
           },
         }),
       });
@@ -232,6 +234,21 @@ export default function Form() {
               <input type="tel" inputMode="tel" className="w-full border border-gray-300 rounded-lg p-3 text-base" placeholder="例：090-1234-5678" value={phone} onChange={e => setPhone(e.target.value)} />
             </div>
           </div>
+          </div>{/* 配送先セクション終わり */}
+
+        {/* 備考セクション：独立 */}
+        <div className="border-t pt-5">
+          <h2 className="text-base font-bold mb-4">備考</h2>
+          <textarea
+            className="w-full border border-gray-300 rounded-lg p-3 text-base"
+            rows={4}
+            placeholder="その他ご連絡事項があればご記入ください"
+            value={remarks}
+            onChange={e => setRemarks(e.target.value)}
+          />
+        </div>
+
+      </div>{/* space-y-5 終わり */}
         </div>
       </div>
 
