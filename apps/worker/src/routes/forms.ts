@@ -534,6 +534,7 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
                 address: responses.address ?? '',
                 recipientName: responses.recipient_name ?? '',
                 phone: responses.phone ?? '',
+　　　　　　　　　 remarks: responses.remarks ?? '',
               }),
             });
           } catch (e) {
@@ -564,6 +565,7 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
               `${responses.address ?? '-'}`,
               `宛名：${responses.recipient_name ?? '-'}`,
               `電話：${responses.phone ?? '-'}`,
+　　　　　　　　 `備考：${responses.remarks ? String(responses.remarks) : 'なし'}`,
             ].join('\n');
             await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
               method: 'POST',
