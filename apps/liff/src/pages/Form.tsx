@@ -11,7 +11,7 @@ const SYMPTOMS = [
   '温かくならない',
   '振動がない/弱い',
   'ベルトの空気が入らない',
-  '左右差がある',
+  '体感に左右差がある',
   '異音がする',
   '破損・傷がある',
   'その他',
@@ -23,6 +23,7 @@ export default function Form() {
   const [memberName, setMemberName] = useState('');
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [otherText, setOtherText] = useState('');
+  const [symptomDetail, setSymptomDetail] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [address, setAddress] = useState('');
   const [recipientName, setRecipientName] = useState('');
@@ -77,6 +78,7 @@ export default function Form() {
             member_id: memberId.trim(),
             member_name: memberName.trim(),
             failure_description: symptomText,
+            symptom_detail: symptomDetail.trim(),
             postal_code: postalCode.trim(),
             address: address.trim(),
             recipient_name: recipientName.trim(),
@@ -212,6 +214,17 @@ export default function Form() {
               onChange={e => setOtherText(e.target.value)}
             />
           )}
+          {/* 詳細の状況（任意）：全症状共通 */}
+          <div className="mt-3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">詳細の状況（任意）</label>
+            <textarea
+              className="w-full border border-gray-300 rounded-lg p-3 text-base"
+              rows={3}
+              placeholder="症状の詳細や気になる点があればご記入ください"
+              value={symptomDetail}
+              onChange={e => setSymptomDetail(e.target.value)}
+            />
+          </div>
         </div>
 
         <div className="border-t pt-5">
@@ -234,7 +247,7 @@ export default function Form() {
               <input type="tel" inputMode="tel" className="w-full border border-gray-300 rounded-lg p-3 text-base" placeholder="例：090-1234-5678" value={phone} onChange={e => setPhone(e.target.value)} />
             </div>
           </div>
-          </div>{/* 配送先セクション終わり */}
+        </div>{/* 配送先セクション終わり */}
 
         {/* 備考セクション：独立 */}
         <div className="border-t pt-5">
@@ -249,7 +262,6 @@ export default function Form() {
         </div>
 
       </div>{/* space-y-5 終わり */}
-
 
       {error && (
         <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
