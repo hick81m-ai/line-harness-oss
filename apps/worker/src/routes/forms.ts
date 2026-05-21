@@ -26,14 +26,28 @@ const forms = new Hono<Env>();
 // キー：症状テキスト（部分一致）
 // value：追加メッセージ
 const SYMPTOM_MESSAGES: Record<string, string> = {
-  '電源が入らない': '電源が入らない症状の場合、充電状態・電源ボタンの長押し動作の動画をお送りください。',
-  '充電ができない': '充電ができない症状の場合、充電器接続時の状態を動画でお送りください。',
-  '温かくならない': '温かくならない症状の場合、電源ON後5分経過した状態の動画をお送りください。',
-  '振動がない/弱い': '振動がない/弱い症状の場合、振動モード作動時の状態を動画でお送りください。',
-  'ベルトの空気が入らない': 'ベルトの空気が入らない症状の場合、膨張モード作動時の状態を動画でお送りください。',
-  '左右差がある': '左右差がある症状の場合、両側同時に動作している状態を動画でお送りください。',
-  '異音がする': '異音がする症状の場合、異音が発生している状態を動画でお送りください。',
-  '破損・傷がある': '破損・傷がある症状の場合、破損箇所がわかる写真をお送りください。',
+  '電源が入らない': `電源が入らない症状の場合、以下の手順で動画をお送りください。
+①充電器を差し込んだ状態で、液晶画面の電池残量が映るようにしながら、Mボタンを15秒間長押ししてください。
+※長押し中に数値が一時的に変化する場合がありますので、その変化もあわせて撮影してください。
+②その後、電源ケーブルを抜いて電源ボタンを押し、電源が入らない状態を撮影してください。`,
+
+  '充電ができない': `充電ができない症状の場合、Shakenに付属の電源ケーブル2種類（USBタイプ・Type-C）をそれぞれ使用し、充電ができないことが確認できる動画をお送りください。使用しているアダプタの仕様がわかるお写真も合わせてご送付ください。`,
+
+  '温かくならない': `温かくならない症状・体感に左右差がある症状・異音がする症状の場合、Shakenの「ボディメイクモード」を起動し、本体を未装着の状態でテーブルの上に置いて、装着部側を約1分間作動させた動画をお送りください。
+※本体とエアバッグの両方が映っている状態で約1分間撮影してください。`,
+
+  '振動がない/弱い': `振動がない/弱い症状の場合、Shakenの「ボディメイクモード」を起動し、本体を未装着の状態でテーブルの上に置いて、装着部側を約1分間作動させた動画をお送りください。
+※本体とエアバッグの両方が映っている状態で約1分間撮影してください。`,
+
+  'ベルトの空気が入らない': `ベルトの空気が入らない症状の場合、膨張モード作動時の状態を動画でお送りください。`,
+
+  '体感に左右差がある': `温かくならない症状・体感に左右差がある症状・異音がする症状の場合、Shakenの「ボディメイクモード」を起動し、本体を未装着の状態でテーブルの上に置いて、装着部側を約1分間作動させた動画をお送りください。
+※本体とエアバッグの両方が映っている状態で約1分間撮影してください。`,
+
+  '異音がする': `温かくならない症状・体感に左右差がある症状・異音がする症状の場合、Shakenの「ボディメイクモード」を起動し、本体を未装着の状態でテーブルの上に置いて、装着部側を約1分間作動させた動画をお送りください。
+※本体とエアバッグの両方が映っている状態で約1分間撮影してください。`,
+
+  '破損・傷がある': `破損・傷がある症状の場合、該当箇所が明確に確認できる写真をお送りください。`,
 };
 
 function getSymptomMessages(failureDescription: string): string[] {
@@ -48,8 +62,10 @@ function getSymptomMessages(failureDescription: string): string[] {
   if (messages.length === 0) {
     messages.push('症状がわかる動画または写真をお送りください。');
   }
+  messages.push('⚠️ 動画・写真には必ずシリアル番号を映してください。\nシリアル番号の撮影がない場合、審査ができない可能性がございます。');
   return messages;
 }
+
 
 // ────────────────────────────────────────────────────────────────
 
@@ -518,7 +534,6 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
             const receiptNo = `#${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${submission.id.slice(0, 6).toUpperCase()}`;
             const friend = friendId ? await getFriendById(c.env.DB, friendId) : null;
             const now = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-
             await fetch(c.env.GAS_WEBHOOK_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -530,11 +545,12 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
                 memberName: responses.member_name ?? '',
                 serialNumber: responses.serial_number ?? '',
                 failureDescription: responses.failure_description ?? '',
+                symptomDetail: responses.symptom_detail ?? '',
                 postalCode: responses.postal_code ?? '',
                 address: responses.address ?? '',
                 recipientName: responses.recipient_name ?? '',
                 phone: responses.phone ?? '',
-　　　　　　　　　 remarks: responses.remarks ?? '',
+                remarks: responses.remarks ?? '',
               }),
             });
           } catch (e) {
@@ -543,7 +559,7 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
         })());
       }
       
-      // Telegram通知
+// Telegram通知
       if (c.env.TELEGRAM_BOT_TOKEN && c.env.TELEGRAM_CHAT_ID) {
         sideEffects.push((async () => {
           try {
@@ -559,13 +575,14 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
               `シリアル番号：${responses.serial_number ?? '-'}`,
               `会員ID：${responses.member_id ?? '-'}`,
               `故障症状：${responses.failure_description ?? '-'}`,
+              `詳細の状況：${responses.symptom_detail ? String(responses.symptom_detail) : 'なし'}`,
               '',
               '【配送先】',
               `〒${responses.postal_code ?? '-'}`,
               `${responses.address ?? '-'}`,
               `宛名：${responses.recipient_name ?? '-'}`,
               `電話：${responses.phone ?? '-'}`,
-　　　　　　　　 `備考：${responses.remarks ? String(responses.remarks) : 'なし'}`,
+              `備考：${responses.remarks ? String(responses.remarks) : 'なし'}`,
             ].join('\n');
             await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
               method: 'POST',
