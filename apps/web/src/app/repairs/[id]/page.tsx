@@ -4,6 +4,11 @@ export function generateStaticParams() {
   return []
 }
 
-export default function RepairDetailPage({ params }: { params: { id: string } }) {
-  return <RepairDetailClient id={params.id} />
+export default async function RepairDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  const { id } = await params
+  return <RepairDetailClient id={id} />
 }
