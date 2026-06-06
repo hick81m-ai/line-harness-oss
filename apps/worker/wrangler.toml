@@ -40,7 +40,7 @@ binding = "ASSETS"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "line-crm"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "23c995c1-edc6-47fe-9b2c-f725a8e971fa"
 
 [[env.production.r2_buckets]]
 binding = "IMAGES"
