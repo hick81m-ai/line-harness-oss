@@ -1,6 +1,6 @@
 'use client';
-import RepairDetailClient from './repair-detail-client';
 import { useParams } from 'next/navigation';
+import RepairDetailClient from './repair-detail-client';
 
 export default function Page() {
   const params = useParams();
