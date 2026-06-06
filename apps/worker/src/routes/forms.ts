@@ -608,6 +608,310 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
   }
 });
 
+// ─── 修理管理用ヘルパー ─────────────────────────────────────────
+
+async function getSubmissionWithFriend(db: D1Database, formId: string, submissionId: string) {
+  const row = await db
+    .prepare(
+      `SELECT fs.*, f.lineUserId as line_user_id_friend
+       FROM form_submissions fs
+       LEFT JOIN friends f ON f.id = fs.friend_id
+       WHERE fs.id = ? AND fs.form_id = ?`,
+    )
+    .bind(submissionId, formId)
+    .first<Record<string, unknown>>();
+  return row ?? null;
+}
+
+function buildReceiptNumber(submissionId: string, createdAt: string) {
+  const date = createdAt ? createdAt.slice(0, 10).replace(/-/g, '') : new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return `#${date}-${submissionId.slice(0, 6).toUpperCase()}`;
+}
+
+function buildReplyTemplate(type: string, data: Record<string, unknown>, submissionId: string, createdAt: string): string {
+  const memberName = String(data.member_name ?? data.recipient_name ?? '');
+  const receiptNumber = buildReceiptNumber(submissionId, createdAt);
+  const failureDesc = String(data.failure_description ?? '');
+  const symptomMessages = getSymptomMessages(failureDesc).join('\n\n');
+
+  switch (type) {
+    case 'video_request':
+      return `${memberName}様
+
+この度はShaken故障申請をいただきありがとうございます。
+受付番号：${receiptNumber}
+
+以下の症状について、確認のための動画・写真をLINEにてお送りいただけますでしょうか。
+
+${symptomMessages}
+
+お手数をおかけしますが、よろしくお願いいたします。`;
+
+    case 'return_request_exchange':
+      return `${memberName}様
+
+受付番号：${receiptNumber}
+
+動画のご提出ありがとうございました。
+内容を確認いたしましたところ、交換対応とさせていただくことになりました。
+
+お手数ですが、現在お使いの製品を下記宛先までご返送ください。
+
+【返送先】
+担当者よりお知らせいたします。
+
+ご不明点がございましたら、お気軽にご連絡ください。`;
+
+    case 'return_request_inspection':
+      return `${memberName}様
+
+受付番号：${receiptNumber}
+
+動画のご提出ありがとうございました。
+内容を確認いたしましたところ、弊社にて詳しく検証させていただく必要がございます。
+
+お手数ですが、現在お使いの製品を下記宛先までご返送ください。
+
+【返送先】
+担当者よりお知らせいたします。
+
+検証結果が出次第、あらためてご連絡いたします。
+ご不明点がございましたら、お気軽にご連絡ください。`;
+
+    case 'shipping_complete':
+      return `${memberName}様
+
+受付番号：${receiptNumber}
+
+交換品を発送いたしましたのでお知らせいたします。
+ヤマト運輸にてお荷物の追跡をご確認ください。
+
+引き続きShakenをよろしくお願いいたします。`;
+
+    default:
+      return '';
+  }
+}
+
+// ─── 1. ステータス更新API ────────────────────────────────────────
+forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => {
+  try {
+    const { formId, submissionId } = c.req.param();
+    const body = await c.req.json<{
+      our_status?: string;
+      hq_status?: string;
+      return_type?: string;
+      admin_memo?: string;
+    }>();
+
+    const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
+    if (!row) return c.json({ success: false, error: 'Submission not found' }, 404);
+
+    const sets: string[] = [];
+    const bindings: unknown[] = [];
+    if (body.our_status !== undefined) { sets.push('our_status = ?'); bindings.push(body.our_status); }
+    if (body.hq_status !== undefined) { sets.push('hq_status = ?'); bindings.push(body.hq_status); }
+    if (body.return_type !== undefined) { sets.push('return_type = ?'); bindings.push(body.return_type); }
+    if (body.admin_memo !== undefined) { sets.push('admin_memo = ?'); bindings.push(body.admin_memo); }
+
+    if (sets.length === 0) return c.json({ success: false, error: 'No fields to update' }, 400);
+
+    bindings.push(submissionId);
+    await c.env.DB.prepare(`UPDATE form_submissions SET ${sets.join(', ')} WHERE id = ?`)
+      .bind(...bindings)
+      .run();
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('PATCH /status error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── 2. 追跡番号登録＋LINE通知API ────────────────────────────────
+forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) => {
+  try {
+    const { formId, submissionId } = c.req.param();
+    const body = await c.req.json<{ type: 'outbound' | 'inbound' | 'hq'; tracking_number: string }>();
+
+    if (!body.type || !body.tracking_number) {
+      return c.json({ success: false, error: 'type and tracking_number are required' }, 400);
+    }
+
+    const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
+    if (!row) return c.json({ success: false, error: 'Submission not found' }, 404);
+
+    const col = `tracking_number_${body.type}`;
+    const sets = [col + ' = ?'];
+    const bindings: unknown[] = [body.tracking_number];
+
+    if (body.type === 'outbound') {
+      sets.push('our_status = ?');
+      bindings.push('発送済み');
+    }
+
+    bindings.push(submissionId);
+    await c.env.DB.prepare(`UPDATE form_submissions SET ${sets.join(', ')} WHERE id = ?`)
+      .bind(...bindings)
+      .run();
+
+    if (body.type === 'outbound') {
+      const lineUserId = String(row.line_user_id_friend ?? '');
+      if (lineUserId) {
+        try {
+          const { LineClient } = await import('@line-crm/line-sdk');
+          const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+          const flexContent = {
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                { type: 'text', text: '📦 発送のお知らせ', weight: 'bold', size: 'lg' },
+                { type: 'text', text: '交換品を発送しました。', wrap: true, margin: 'md' },
+                { type: 'text', text: '追跡番号', weight: 'bold', margin: 'md' },
+                { type: 'text', text: body.tracking_number, wrap: true },
+                { type: 'text', text: 'ヤマト運輸にてご確認ください。', wrap: true, margin: 'md', color: '#888888', size: 'sm' },
+              ],
+            },
+          };
+          await lineClient.pushMessage(lineUserId, [{ type: 'flex', altText: '📦 発送のお知らせ', contents: flexContent }]);
+          await c.env.DB.prepare(
+            `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'admin', ?)`,
+          )
+            .bind(crypto.randomUUID(), row.friend_id, JSON.stringify(flexContent), jstNow())
+            .run();
+        } catch (e) {
+          console.error('LINE push (tracking) failed:', e);
+        }
+      }
+    }
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('PATCH /tracking error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── 3. 返信テンプレ生成API ──────────────────────────────────────
+forms.get('/api/forms/:formId/submissions/:submissionId/reply-template', async (c) => {
+  try {
+    const { formId, submissionId } = c.req.param();
+    const type = c.req.query('type') ?? '';
+
+    const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
+    if (!row) return c.json({ success: false, error: 'Submission not found' }, 404);
+
+    const data = JSON.parse(String(row.data ?? '{}')) as Record<string, unknown>;
+    const template = buildReplyTemplate(type, data, submissionId, String(row.created_at ?? ''));
+
+    if (!template) return c.json({ success: false, error: 'Unknown template type' }, 400);
+
+    return c.json({ success: true, data: { template } });
+  } catch (err) {
+    console.error('GET /reply-template error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── 4. LINE返信送信API ──────────────────────────────────────────
+forms.post('/api/forms/:formId/submissions/:submissionId/send-reply', async (c) => {
+  try {
+    const { formId, submissionId } = c.req.param();
+    const body = await c.req.json<{
+      message: string;
+      message_type: 'text' | 'flex';
+      flex_content?: Record<string, unknown>;
+      update_status_to?: string;
+    }>();
+
+    if (!body.message) return c.json({ success: false, error: 'message is required' }, 400);
+
+    const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
+    if (!row) return c.json({ success: false, error: 'Submission not found' }, 404);
+
+    const lineUserId = String(row.line_user_id_friend ?? '');
+    if (!lineUserId) return c.json({ success: false, error: 'No LINE user associated' }, 400);
+
+    try {
+      const { LineClient } = await import('@line-crm/line-sdk');
+      const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+      const msg =
+        body.message_type === 'flex' && body.flex_content
+          ? { type: 'flex' as const, altText: body.message, contents: body.flex_content }
+          : { type: 'text' as const, text: body.message };
+      await lineClient.pushMessage(lineUserId, [msg]);
+      await c.env.DB.prepare(
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', ?, ?, NULL, NULL, 'admin', ?)`,
+      )
+        .bind(crypto.randomUUID(), row.friend_id, body.message_type, body.message_type === 'flex' ? JSON.stringify(body.flex_content) : body.message, jstNow())
+        .run();
+    } catch (e) {
+      console.error('LINE push (send-reply) failed:', e);
+    }
+
+    if (body.update_status_to) {
+      await c.env.DB.prepare(`UPDATE form_submissions SET our_status = ? WHERE id = ?`)
+        .bind(body.update_status_to, submissionId)
+        .run();
+    }
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('POST /send-reply error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── 5. リマインド送信API ────────────────────────────────────────
+forms.post('/api/forms/:formId/submissions/:submissionId/remind', async (c) => {
+  try {
+    const { formId, submissionId } = c.req.param();
+
+    const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
+    if (!row) return c.json({ success: false, error: 'Submission not found' }, 404);
+
+    if (row.our_status !== '動画依頼済み') {
+      return c.json({ success: false, error: 'our_status must be 動画依頼済み' }, 400);
+    }
+    if (row.video_reminder_sent_at) {
+      return c.json({ success: false, error: 'Reminder already sent' }, 400);
+    }
+
+    const lineUserId = String(row.line_user_id_friend ?? '');
+    if (!lineUserId) return c.json({ success: false, error: 'No LINE user associated' }, 400);
+
+    const data = JSON.parse(String(row.data ?? '{}')) as Record<string, unknown>;
+    const template = buildReplyTemplate('video_request', data, submissionId, String(row.created_at ?? ''));
+
+    try {
+      const { LineClient } = await import('@line-crm/line-sdk');
+      const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+      await lineClient.pushMessage(lineUserId, [{ type: 'text', text: template }]);
+      await c.env.DB.prepare(
+        `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'admin', ?)`,
+      )
+        .bind(crypto.randomUUID(), row.friend_id, template, jstNow())
+        .run();
+    } catch (e) {
+      console.error('LINE push (remind) failed:', e);
+    }
+
+    const now = jstNow();
+    await c.env.DB.prepare(`UPDATE form_submissions SET video_reminder_sent_at = ? WHERE id = ?`)
+      .bind(now, submissionId)
+      .run();
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('POST /remind error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ────────────────────────────────────────────────────────────────
+
 async function callFormWebhook(form: DbForm, submissionData: Record<string, unknown>): Promise<{ passed: boolean; data: unknown }> {
   if (!form.on_submit_webhook_url) return { passed: true, data: null };
   try {
