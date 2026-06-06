@@ -196,7 +196,7 @@ export default function RepairsPage() {
                   <div className="flex sm:flex-col items-center sm:items-end gap-2 shrink-0">
                     <span className="text-xs text-gray-400">{formatDateTime(sub.createdAt)}</span>
                     <Link
-                      href={`/repairs/${sub.id}`}
+                      href={`/repairs/detail?id=${sub.id}`}
                       className="inline-flex items-center px-3 py-1.5 rounded-lg bg-[#06C755] text-white text-xs font-medium hover:bg-[#05b34b] transition-colors whitespace-nowrap"
                     >
                       対応する →
