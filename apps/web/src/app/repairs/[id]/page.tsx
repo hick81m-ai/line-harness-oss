@@ -296,7 +296,7 @@ export default function RepairDetailPage() {
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-3">配送先</h2>
             <dl>
-              <InfoRow label="郵便番号" value={d.postal_code ? `〒${d.postal_code}` : undefined} />
+              <InfoRow label="郵便番号" value={d.postal_code ? `〒${String(d.postal_code)}` : undefined} />
               <InfoRow label="住所" value={d.address} />
               <InfoRow label="宛名" value={d.recipient_name} />
               <InfoRow label="電話番号" value={d.phone} />

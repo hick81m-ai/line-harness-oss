@@ -177,15 +177,15 @@ export default function RepairsPage() {
 
                     <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm mb-1">
                       <span className="text-gray-900 font-medium">{sub.friendName || '—'}</span>
-                      {d.member_name && (
+                      {!!d.member_name && (
                         <span className="text-gray-600">{String(d.member_name)}</span>
                       )}
-                      {d.member_id && (
+                      {!!d.member_id && (
                         <span className="text-gray-400 text-xs">ID: {String(d.member_id)}</span>
                       )}
                     </div>
 
-                    {d.failure_description && (
+                    {!!d.failure_description && (
                       <p className="text-xs text-gray-500 truncate max-w-lg">
                         {String(d.failure_description)}
                       </p>
