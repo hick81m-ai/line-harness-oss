@@ -1,9 +1,9 @@
+import RepairDetailClient from './repair-detail-client'
+
 export function generateStaticParams() {
   return []
 }
 
-import RepairDetailClient from './repair-detail-client'
-
-export default function RepairDetailPage() {
-  return <RepairDetailClient />
+export default function RepairDetailPage({ params }: { params: { id: string } }) {
+  return <RepairDetailClient id={params.id} />
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { fetchApi } from '@/lib/api'
 import Header from '@/components/layout/header'
 
@@ -88,10 +88,9 @@ function Toast({ message, onClose }: { message: string; onClose: () => void }) {
   )
 }
 
-export default function RepairDetailClient() {
-  const params = useParams()
+export default function RepairDetailClient({ id }: { id: string }) {
   const router = useRouter()
-  const submissionId = String(params.id)
+  const submissionId = id
 
   const [sub, setSub] = useState<Submission | null>(null)
   const [loading, setLoading] = useState(true)
