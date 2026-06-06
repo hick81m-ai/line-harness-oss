@@ -1,16 +1,9 @@
+'use client';
 import RepairDetailClient from './repair-detail-client';
+import { useParams } from 'next/navigation';
 
-export const dynamic = 'force-static';
-
-export function generateStaticParams() {
-  return [];
-}
-
-type Props = {
-  params: Promise<{ id: string }>;
-};
-
-export default async function Page({ params }: Props) {
-  const { id } = await params;
+export default function Page() {
+  const params = useParams();
+  const id = params.id as string;
   return <RepairDetailClient id={id} />;
 }
