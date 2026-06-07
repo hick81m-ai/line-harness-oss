@@ -421,7 +421,7 @@ async function handleEvent(
     const friend = await getFriendByLineUserId(db, userId);
     if (!friend) return;
 
-    const msg = event.message as { type: string; fileName?: string; title?: string };
+    const msg = event.message as { id: string; type: string; fileName?: string; title?: string };
     const labels: Record<string, string> = {
       sticker: '[スタンプ]',
       image: '[画像]',
@@ -439,6 +439,85 @@ async function handleEvent(
       )
       .bind(crypto.randomUUID(), friend.id, msg.type, content, jstNow())
       .run();
+
+    // 画像・動画: GAS経由でDriveに保存（best-effort）
+    if ((msg.type === 'image' || msg.type === 'video') && env.GAS_WEBHOOK_URL) {
+      (async () => {
+        try {
+          // 1. LINE Content APIからダウンロード
+          const contentRes = await fetch(
+            `https://api-data.line.me/v2/bot/message/${msg.id}/content`,
+            { headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` } },
+          );
+          if (!contentRes.ok) return;
+          const buffer = await contentRes.arrayBuffer();
+
+          // 2. base64変換
+          const bytes = new Uint8Array(buffer);
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+          const fileBase64 = btoa(binary);
+
+          // 3. 最新のform_submissionから会員情報を取得
+          const sub = await db
+            .prepare(
+              `SELECT fs.id, json_extract(fs.data, '$.member_id') as member_id,
+                      json_extract(fs.data, '$.failure_description') as failure_description
+               FROM form_submissions fs
+               JOIN friends f ON f.id = fs.friend_id
+               WHERE f.line_user_id = ?
+               ORDER BY fs.created_at DESC LIMIT 1`,
+            )
+            .bind(userId)
+            .first<{ id: string; member_id: string | null; failure_description: string | null }>();
+
+          // 4. ファイル名を生成
+          const today = jstNow().slice(0, 10).replace(/-/g, '');
+          const displayName = (friend.display_name ?? '').replace(/\s/g, '');
+          const ext = msg.type === 'image' ? 'jpg' : 'mp4';
+          const mimeType = msg.type === 'image' ? 'image/jpeg' : 'video/mp4';
+          let fileName: string;
+          if (sub?.member_id) {
+            const memberId = String(sub.member_id).replace(/\s/g, '');
+            const failDesc = String(sub.failure_description ?? '').replace(/\s/g, '').slice(0, 20);
+            fileName = `${today}_${memberId}_${displayName}_${failDesc}.${ext}`;
+          } else {
+            fileName = `${today}_${displayName}.${ext}`;
+          }
+
+          // 5. GASにPOST
+          const gasRes = await fetch(env.GAS_WEBHOOK_URL!, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'save_file',
+              fileBase64,
+              mimeType,
+              fileName,
+              displayName: friend.display_name ?? '',
+              memberId: sub?.member_id ?? null,
+            }),
+          });
+
+          if (!gasRes.ok) return;
+          const gasData = await gasRes.json() as { fileUrl?: string; folderUrl?: string };
+
+          // 6. folderUrlをform_submissionsに保存（既存値があれば上書きしない）
+          if (gasData.folderUrl && sub?.id) {
+            await db
+              .prepare(
+                `UPDATE form_submissions SET drive_folder_url = ?
+                 WHERE id = ? AND (drive_folder_url IS NULL OR drive_folder_url = '')`,
+              )
+              .bind(gasData.folderUrl, sub.id)
+              .run();
+          }
+        } catch (e) {
+          console.error('GAS file upload failed:', e);
+        }
+      })();
+    }
+
     return;
   }
 
