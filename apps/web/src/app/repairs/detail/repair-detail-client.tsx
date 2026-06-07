@@ -7,20 +7,22 @@ import Header from '@/components/layout/header'
 
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
-const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
+const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送伝票受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
 const HQ_STATUS_OPTIONS = ['未申請', '申請済み', '審査中', '承認済み', '本社に返送済み', 'キャンセル', '不良症状なし', '有償修理']
 const INVENTORY_OPTIONS = ['本社交換品', 'ブライアン新品']
 const CUSTOMER_OPTIONS = ['ヴァリエ', '4works', 'OZALLY', '岡', 'AOT', 'Fライン', '対象外']
 
 const OUR_STATUS_COLORS: Record<string, string> = {
-  '受付済み':        'bg-gray-100 text-gray-700',
-  '動画依頼済み':    'bg-blue-100 text-blue-700',
-  '動画受領済み':    'bg-cyan-100 text-cyan-700',
-  '返送依頼済み':    'bg-orange-100 text-orange-700',
-  '返送品受領済み':  'bg-purple-100 text-purple-700',
-  '発送済み':        'bg-green-100 text-green-700',
-  '追跡番号連絡済み': 'bg-teal-100 text-teal-700',
-  '完了':            'bg-emerald-100 text-emerald-800',
+  '受付済み':          'bg-gray-100 text-gray-700',
+  '動画依頼済み':      'bg-blue-100 text-blue-700',
+  '動画受領済み':      'bg-cyan-100 text-cyan-700',
+  '返送依頼済み':      'bg-orange-100 text-orange-700',
+  '返送伝票受領済み':  'bg-purple-100 text-purple-700',
+  '発送済み':          'bg-green-100 text-green-700',
+  '追跡番号連絡済み':  'bg-teal-100 text-teal-700',
+  '完了':              'bg-emerald-100 text-emerald-800',
+  'キャンセル':        'bg-red-100 text-red-700',
+  '不良症状なし':      'bg-gray-100 text-gray-500',
 }
 
 const HQ_STATUS_COLORS: Record<string, string> = {
@@ -48,6 +50,7 @@ interface Submission {
   shipping_cost_outbound?: number | null
   shipping_cost_hq?: number | null
   estimated_delivery_date?: string | null
+  arrived_at?: string | null
   video_reminder_sent_at?: string | null
   admin_memo?: string | null
   sent_serial_number?: string | null
@@ -134,7 +137,9 @@ export default function RepairDetailClient({ id }: { id: string }) {
     outbound: { number: '', cost: '', date: '' },
     hq:       { number: '', cost: '', date: '' },
   })
-  const [savingTrack, setSavingTrack] = useState<'inbound' | 'outbound' | 'hq' | null>(null)
+  const [savingTrack, setSavingTrack] = useState<'inbound-save' | 'outbound-save' | 'outbound-notify' | 'hq' | null>(null)
+  const [arrivedAt, setArrivedAt] = useState<string | null>(null)
+  const [savingArrived, setSavingArrived] = useState(false)
 
   // shipping product
   const [sentSerial, setSentSerial] = useState('')
@@ -192,6 +197,7 @@ export default function RepairDetailClient({ id }: { id: string }) {
             outbound: { number: s.tracking_number_outbound ?? '', cost: String(s.shipping_cost_outbound ?? ''), date: s.estimated_delivery_date ?? '' },
             hq:       { number: s.tracking_number_hq ?? '', cost: String(s.shipping_cost_hq ?? ''), date: '' },
           })
+          setArrivedAt(s.arrived_at ?? null)
           setMemo(s.admin_memo ?? '')
           setSentSerial(s.sent_serial_number ?? '')
           setHqTrackNum(s.hq_tracking_number ?? '')
@@ -226,11 +232,12 @@ export default function RepairDetailClient({ id }: { id: string }) {
     setSaving(false)
   }
 
-  async function saveTracking(type: 'inbound' | 'outbound' | 'hq') {
+  async function saveTracking(type: 'inbound' | 'outbound' | 'hq', notify = false) {
     if (!sub) return
     const item = trackData[type]
     if (!item.number.trim()) return
-    setSavingTrack(type)
+    const key = type === 'outbound' ? (notify ? 'outbound-notify' : 'outbound-save') : type === 'inbound' ? 'inbound-save' : 'hq'
+    setSavingTrack(key)
     try {
       const payload: Record<string, unknown> = {
         type,
@@ -238,15 +245,32 @@ export default function RepairDetailClient({ id }: { id: string }) {
       }
       if (item.cost !== '' && item.cost !== 'null') payload.shipping_cost = Number(item.cost)
       if (item.date) payload.estimated_delivery_date = item.date
+      if (type === 'outbound') payload.notify = notify
       await fetchApi(`/api/forms/${FORM_ID}/submissions/${sub.id}/tracking`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
       })
-      const msg = type === 'outbound' ? '✅ 保存してLINEに通知しました' : '✅ 追跡番号を保存しました'
-      showToast(msg)
+      showToast(notify ? '✅ 保存してLINEに通知しました' : '✅ 追跡番号を保存しました')
       await load()
     } catch { showToast('❌ 保存に失敗しました') }
     setSavingTrack(null)
+  }
+
+  async function confirmArrived() {
+    if (!sub || arrivedAt) return
+    setSavingArrived(true)
+    try {
+      const res = await fetchApi<{ success: boolean; arrived_at?: string }>(
+        `/api/forms/${FORM_ID}/submissions/${sub.id}/arrived`,
+        { method: 'PATCH' },
+      )
+      if (res.success && res.arrived_at) {
+        setArrivedAt(res.arrived_at)
+        showToast('✅ 着荷確認しました')
+        await load()
+      }
+    } catch { showToast('❌ 着荷確認に失敗しました') }
+    setSavingArrived(false)
   }
 
   async function saveShipping() {
@@ -370,7 +394,22 @@ export default function RepairDetailClient({ id }: { id: string }) {
             <dl>
               <InfoRow label="受付番号" value={buildReceiptNumber(sub)} />
               <InfoRow label="申請日時" value={formatDateTime(sub.createdAt)} />
-              <InfoRow label="LINE名" value={sub.friendName} />
+              <div className="grid grid-cols-[110px_1fr] gap-2 py-2 border-b border-gray-100">
+                <dt className="text-xs text-gray-500 pt-0.5">LINE名</dt>
+                <dd className="text-sm text-gray-900 flex items-center gap-2 flex-wrap">
+                  <span>{sub.friendName || '—'}</span>
+                  {sub.friendId && (
+                    <a
+                      href={`https://line-harness-admin-e12.pages.dev/chats?friend=${sub.friendId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+                    >
+                      💬 チャットを開く
+                    </a>
+                  )}
+                </dd>
+              </div>
               <InfoRow label="会員名" value={d.member_name} />
               <InfoRow label="会員ID" value={d.member_id} />
               <InfoRow label="シリアル番号" value={d.serial_number} />
@@ -489,51 +528,140 @@ export default function RepairDetailClient({ id }: { id: string }) {
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">追跡番号</h2>
             <div className="space-y-4">
-              {([
-                { key: 'inbound' as const, label: '受信追跡番号（ユーザー→弊社）', costLabel: '着払い料金（円）', btnLabel: '保存' },
-                { key: 'outbound' as const, label: '発送追跡番号（弊社→ユーザー）', costLabel: '送料（円）', btnLabel: '保存して通知' },
-                { key: 'hq' as const, label: '本社追跡番号（弊社→本社）', costLabel: '送料（円）', btnLabel: '保存' },
-              ] as const).map((item) => (
-                <div key={item.key} className="border border-gray-100 rounded-lg p-3 space-y-2">
-                  <p className="text-xs text-gray-500 font-medium">{item.label}</p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={trackData[item.key].number}
-                      onChange={(e) => setTrackData((prev) => ({ ...prev, [item.key]: { ...prev[item.key], number: e.target.value } }))}
-                      placeholder="追跡番号"
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                    <input
-                      type="number"
-                      value={trackData[item.key].cost === 'null' ? '' : trackData[item.key].cost}
-                      onChange={(e) => setTrackData((prev) => ({ ...prev, [item.key]: { ...prev[item.key], cost: e.target.value } }))}
-                      placeholder={item.costLabel}
-                      className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-                  <div className="flex gap-2 items-center">
-                    <label className="text-xs text-gray-500 whitespace-nowrap">お届け予定日</label>
-                    <input
-                      type="date"
-                      value={trackData[item.key].date}
-                      onChange={(e) => setTrackData((prev) => ({ ...prev, [item.key]: { ...prev[item.key], date: e.target.value } }))}
-                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                    <button
-                      onClick={() => saveTracking(item.key)}
-                      disabled={savingTrack === item.key || !trackData[item.key].number.trim()}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors disabled:opacity-40 ${
-                        item.key === 'outbound'
-                          ? 'bg-blue-600 text-white hover:bg-blue-700'
-                          : 'bg-gray-800 text-white hover:bg-gray-700'
-                      }`}
-                    >
-                      {savingTrack === item.key ? '保存中...' : item.btnLabel}
-                    </button>
-                  </div>
+              {/* 受信追跡番号 */}
+              <div className="border border-gray-100 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-gray-500 font-medium">受信追跡番号（ユーザー→弊社）</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={trackData.inbound.number}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, inbound: { ...prev.inbound, number: e.target.value } }))}
+                    placeholder="追跡番号"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <input
+                    type="number"
+                    value={trackData.inbound.cost === 'null' ? '' : trackData.inbound.cost}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, inbound: { ...prev.inbound, cost: e.target.value } }))}
+                    placeholder="着払い料金（円）"
+                    className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
                 </div>
-              ))}
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">お届け予定日</label>
+                  <input
+                    type="date"
+                    value={trackData.inbound.date}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, inbound: { ...prev.inbound, date: e.target.value } }))}
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <button
+                    onClick={() => saveTracking('inbound')}
+                    disabled={savingTrack === 'inbound-save' || !trackData.inbound.number.trim()}
+                    className="px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
+                  >
+                    {savingTrack === 'inbound-save' ? '保存中...' : '保存'}
+                  </button>
+                </div>
+                {/* 着荷確認 */}
+                {arrivedAt ? (
+                  <p className="text-xs text-green-600 font-medium">✅ 着荷確認済み（{formatDateTime(arrivedAt)}）</p>
+                ) : (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      disabled={savingArrived}
+                      onChange={confirmArrived}
+                      className="accent-green-600"
+                    />
+                    <span className="text-xs text-gray-600">着荷確認{savingArrived ? '（確認中...）' : ''}</span>
+                  </label>
+                )}
+              </div>
+
+              {/* 発送追跡番号 */}
+              <div className="border border-gray-100 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-gray-500 font-medium">発送追跡番号（弊社→ユーザー）</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={trackData.outbound.number}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, outbound: { ...prev.outbound, number: e.target.value } }))}
+                    placeholder="追跡番号"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <input
+                    type="number"
+                    value={trackData.outbound.cost === 'null' ? '' : trackData.outbound.cost}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, outbound: { ...prev.outbound, cost: e.target.value } }))}
+                    placeholder="送料（円）"
+                    className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">お届け予定日</label>
+                  <input
+                    type="date"
+                    value={trackData.outbound.date}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, outbound: { ...prev.outbound, date: e.target.value } }))}
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => saveTracking('outbound', false)}
+                    disabled={savingTrack === 'outbound-save' || !trackData.outbound.number.trim()}
+                    className="flex-1 py-2 rounded-lg text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
+                  >
+                    {savingTrack === 'outbound-save' ? '保存中...' : '保存のみ'}
+                  </button>
+                  <button
+                    onClick={() => saveTracking('outbound', true)}
+                    disabled={savingTrack === 'outbound-notify' || !trackData.outbound.number.trim()}
+                    className="flex-1 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                  >
+                    {savingTrack === 'outbound-notify' ? '送信中...' : '保存して通知'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 本社追跡番号 */}
+              <div className="border border-gray-100 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-gray-500 font-medium">本社追跡番号（弊社→本社）</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={trackData.hq.number}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, hq: { ...prev.hq, number: e.target.value } }))}
+                    placeholder="追跡番号"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <input
+                    type="number"
+                    value={trackData.hq.cost === 'null' ? '' : trackData.hq.cost}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, hq: { ...prev.hq, cost: e.target.value } }))}
+                    placeholder="送料（円）"
+                    className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">お届け予定日</label>
+                  <input
+                    type="date"
+                    value={trackData.hq.date}
+                    onChange={(e) => setTrackData((prev) => ({ ...prev, hq: { ...prev.hq, date: e.target.value } }))}
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  />
+                  <button
+                    onClick={() => saveTracking('hq')}
+                    disabled={savingTrack === 'hq' || !trackData.hq.number.trim()}
+                    className="px-3 py-2 rounded-lg text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
+                  >
+                    {savingTrack === 'hq' ? '保存中...' : '保存'}
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
 

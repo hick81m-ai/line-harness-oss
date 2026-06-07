@@ -119,6 +119,7 @@ function serializeSubmission(row: (DbFormSubmission & { friend_name?: string | n
     sent_serial_number: row.sent_serial_number as string | null | undefined,
     hq_tracking_number: row.hq_tracking_number as string | null | undefined,
     inventory_type: row.inventory_type as string | null | undefined,
+    arrived_at: row.arrived_at as string | null | undefined,
     customer: row.customer as string | null | undefined,
   };
 }
@@ -766,6 +767,7 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) =
       tracking_number: string;
       shipping_cost?: number;
       estimated_delivery_date?: string;
+      notify?: boolean;
     }>();
 
     if (!body.type || !body.tracking_number) {
@@ -797,7 +799,7 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) =
       .bind(...bindings)
       .run();
 
-    if (body.type === 'outbound') {
+    if (body.type === 'outbound' && body.notify === true) {
       const lineUserId = String(row.line_user_id_friend ?? '');
       if (lineUserId) {
         try {
@@ -1072,6 +1074,25 @@ forms.post('/api/forms/:formId/submissions/:submissionId/remind', async (c) => {
     return c.json({ success: true });
   } catch (err) {
     console.error('POST /remind error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── 6. 着荷確認API ──────────────────────────────────────────────
+forms.patch('/api/forms/:formId/submissions/:submissionId/arrived', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  try {
+    const { submissionId } = c.req.param();
+    const now = jstNow();
+    await c.env.DB.prepare(
+      `UPDATE form_submissions SET arrived_at = ?, our_status = ? WHERE id = ?`,
+    )
+      .bind(now, '返送伝票受領済み', submissionId)
+      .run();
+    return c.json({ success: true, arrived_at: now });
+  } catch (err) {
+    console.error('PATCH /arrived error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

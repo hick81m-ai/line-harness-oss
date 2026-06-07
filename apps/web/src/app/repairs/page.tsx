@@ -7,19 +7,21 @@ import Header from '@/components/layout/header'
 
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
-const OUR_STATUSES = ['全件', '受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
+const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送伝票受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
+const HQ_STATUS_OPTIONS = ['未申請', '申請済み', '審査中', '承認済み', '本社に返送済み', 'キャンセル', '不良症状なし', '有償修理']
+const CUSTOMER_OPTIONS = ['ヴァリエ', '4works', 'OZALLY', '岡', 'AOT', 'Fライン', '対象外']
 
 const OUR_STATUS_COLORS: Record<string, string> = {
-  '受付済み':        'bg-gray-100 text-gray-700',
-  '動画依頼済み':    'bg-blue-100 text-blue-700',
-  '動画受領済み':    'bg-cyan-100 text-cyan-700',
-  '返送依頼済み':    'bg-orange-100 text-orange-700',
-  '返送品受領済み':  'bg-purple-100 text-purple-700',
-  '発送済み':        'bg-green-100 text-green-700',
-  '追跡番号連絡済み': 'bg-teal-100 text-teal-700',
-  '完了':            'bg-emerald-100 text-emerald-800',
-  'キャンセル':      'bg-red-100 text-red-700',
-  '不良症状なし':    'bg-gray-100 text-gray-500',
+  '受付済み':          'bg-gray-100 text-gray-700',
+  '動画依頼済み':      'bg-blue-100 text-blue-700',
+  '動画受領済み':      'bg-cyan-100 text-cyan-700',
+  '返送依頼済み':      'bg-orange-100 text-orange-700',
+  '返送伝票受領済み':  'bg-purple-100 text-purple-700',
+  '発送済み':          'bg-green-100 text-green-700',
+  '追跡番号連絡済み':  'bg-teal-100 text-teal-700',
+  '完了':              'bg-emerald-100 text-emerald-800',
+  'キャンセル':        'bg-red-100 text-red-700',
+  '不良症状なし':      'bg-gray-100 text-gray-500',
 }
 
 const HQ_STATUS_COLORS: Record<string, string> = {
@@ -50,11 +52,22 @@ interface Submission {
   shipping_cost_outbound?: number | null
   shipping_cost_hq?: number | null
   estimated_delivery_date?: string | null
+  arrived_at?: string | null
   sent_serial_number?: string | null
   hq_tracking_number?: string | null
   inventory_type?: string | null
   customer?: string | null
 }
+
+const QUICK_FILTERS: { label: string; fn: (s: Submission) => boolean }[] = [
+  { label: '全件', fn: () => true },
+  { label: '未対応', fn: (s) => (s.our_status ?? '受付済み') === '受付済み' },
+  { label: 'ユーザー待ち', fn: (s) => ['動画依頼済み', '返送依頼済み'].includes(s.our_status ?? '') },
+  { label: '弊社待ち', fn: (s) => ['動画受領済み', '返送伝票受領済み'].includes(s.our_status ?? '') && s.return_type === 'inspection' },
+  { label: '出荷予定', fn: (s) => (s.our_status ?? '') === '返送伝票受領済み' && s.return_type === 'exchange' },
+  { label: '着荷未確認', fn: (s) => !s.arrived_at },
+  { label: '本社未申請', fn: (s) => (s.hq_status ?? '未申請') === '未申請' && !['キャンセル', '不良症状なし', '完了'].includes(s.our_status ?? '') },
+]
 
 function buildReceiptNumber(sub: Submission): string {
   const date = sub.createdAt.slice(0, 10).replace(/-/g, '')
@@ -89,7 +102,7 @@ function downloadCsv(submissions: Submission[]) {
   const headers = [
     '受付番号', '申請日時', 'LINE名', '会員名', '会員ID', 'シリアル番号', '故障症状',
     '弊社ステータス', '本社ステータス', '返送種別', 'カスタマー',
-    '着払い料金', '送料(弊社→ユーザー)', '送料(弊社→本社)', 'お届け予定日',
+    '着払い料金', '送料(弊社→ユーザー)', '送料(弊社→本社)', 'お届け予定日', '着荷確認日時',
     '送付シリアル番号', '本社発行追跡番号', '在庫区分',
     '郵便番号', '住所', '宛名', '電話番号', '備考',
   ]
@@ -111,6 +124,7 @@ function downloadCsv(submissions: Submission[]) {
       sub.shipping_cost_outbound,
       sub.shipping_cost_hq,
       sub.estimated_delivery_date,
+      sub.arrived_at ? formatDateTime(sub.arrived_at) : '',
       sub.sent_serial_number,
       sub.hq_tracking_number,
       sub.inventory_type,
@@ -135,7 +149,13 @@ function downloadCsv(submissions: Submission[]) {
 export default function RepairsPage() {
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('全件')
+  const [activeFilter, setActiveFilter] = useState('全件')
+
+  // 詳細フィルタ
+  const [showDetailFilter, setShowDetailFilter] = useState(false)
+  const [filterOurStatus, setFilterOurStatus] = useState<string[]>([])
+  const [filterHqStatus, setFilterHqStatus] = useState<string[]>([])
+  const [filterCustomer, setFilterCustomer] = useState<string[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -157,19 +177,34 @@ export default function RepairsPage() {
 
   useEffect(() => { load() }, [load])
 
-  const counts = useMemo(() => {
-    const map: Record<string, number> = { '全件': submissions.length }
-    for (const s of submissions) {
-      const st = s.our_status ?? '受付済み'
-      map[st] = (map[st] ?? 0) + 1
+  const quickCounts = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const qf of QUICK_FILTERS) {
+      map[qf.label] = submissions.filter(qf.fn).length
     }
     return map
   }, [submissions])
 
   const filtered = useMemo(() => {
-    if (activeTab === '全件') return submissions
-    return submissions.filter((s) => (s.our_status ?? '受付済み') === activeTab)
-  }, [submissions, activeTab])
+    const qf = QUICK_FILTERS.find((f) => f.label === activeFilter) ?? QUICK_FILTERS[0]
+    let result = submissions.filter(qf.fn)
+    if (filterOurStatus.length > 0) {
+      result = result.filter((s) => filterOurStatus.includes(s.our_status ?? '受付済み'))
+    }
+    if (filterHqStatus.length > 0) {
+      result = result.filter((s) => filterHqStatus.includes(s.hq_status ?? '未申請'))
+    }
+    if (filterCustomer.length > 0) {
+      result = result.filter((s) => filterCustomer.includes(s.customer ?? ''))
+    }
+    return result
+  }, [submissions, activeFilter, filterOurStatus, filterHqStatus, filterCustomer])
+
+  function toggleCheck(arr: string[], setArr: (v: string[]) => void, val: string) {
+    setArr(arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val])
+  }
+
+  const hasDetailFilter = filterOurStatus.length > 0 || filterHqStatus.length > 0 || filterCustomer.length > 0
 
   return (
     <div>
@@ -187,32 +222,104 @@ export default function RepairsPage() {
         }
       />
 
-      {/* タブ */}
-      <div className="overflow-x-auto mb-5">
+      {/* クイックフィルタ */}
+      <div className="overflow-x-auto mb-3">
         <div className="flex gap-1 min-w-max">
-          {OUR_STATUSES.map((tab) => (
+          {QUICK_FILTERS.map((qf) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
+              key={qf.label}
+              onClick={() => setActiveFilter(qf.label)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                activeTab === tab
+                activeFilter === qf.label
                   ? 'bg-[#06C755] text-white'
                   : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
               }`}
             >
-              {tab}
-              {counts[tab] != null && (
-                <span
-                  className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-bold ${
-                    activeTab === tab ? 'bg-white/30 text-white' : 'bg-gray-100 text-gray-600'
-                  }`}
-                >
-                  {counts[tab]}
-                </span>
-              )}
+              {qf.label}
+              <span
+                className={`inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-bold ${
+                  activeFilter === qf.label ? 'bg-white/30 text-white' : 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {quickCounts[qf.label] ?? 0}
+              </span>
             </button>
           ))}
         </div>
+      </div>
+
+      {/* 詳細フィルタ */}
+      <div className="mb-4">
+        <button
+          onClick={() => setShowDetailFilter(!showDetailFilter)}
+          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+            hasDetailFilter
+              ? 'border-green-400 bg-green-50 text-green-700'
+              : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+          }`}
+        >
+          {showDetailFilter ? '▲' : '▼'} 詳細フィルタ{hasDetailFilter ? '（適用中）' : ''}
+        </button>
+        {showDetailFilter && (
+          <div className="mt-2 bg-white border border-gray-200 rounded-lg p-4 space-y-4">
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-1.5">弊社ステータス</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {OUR_STATUS_OPTIONS.map((s) => (
+                  <label key={s} className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={filterOurStatus.includes(s)}
+                      onChange={() => toggleCheck(filterOurStatus, setFilterOurStatus, s)}
+                      className="accent-green-600"
+                    />
+                    <span className="text-xs text-gray-700">{s}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-1.5">本社ステータス</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {HQ_STATUS_OPTIONS.map((s) => (
+                  <label key={s} className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={filterHqStatus.includes(s)}
+                      onChange={() => toggleCheck(filterHqStatus, setFilterHqStatus, s)}
+                      className="accent-green-600"
+                    />
+                    <span className="text-xs text-gray-700">{s}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-1.5">カスタマー</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {CUSTOMER_OPTIONS.map((s) => (
+                  <label key={s} className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={filterCustomer.includes(s)}
+                      onChange={() => toggleCheck(filterCustomer, setFilterCustomer, s)}
+                      className="accent-green-600"
+                    />
+                    <span className="text-xs text-gray-700">{s}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            {hasDetailFilter && (
+              <button
+                onClick={() => { setFilterOurStatus([]); setFilterHqStatus([]); setFilterCustomer([]) }}
+                className="text-xs text-red-500 hover:underline"
+              >
+                フィルタをクリア
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 一覧 */}
@@ -241,7 +348,6 @@ export default function RepairsPage() {
                 className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow"
               >
                 <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-                  {/* 左：申請情報 */}
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1.5">
                       <span className="text-xs font-mono text-gray-500">{buildReceiptNumber(sub)}</span>
@@ -255,6 +361,11 @@ export default function RepairsPage() {
                       {sub.return_type === 'inspection' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
                           弊社検証
+                        </span>
+                      )}
+                      {sub.customer && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+                          {sub.customer}
                         </span>
                       )}
                     </div>
@@ -276,7 +387,6 @@ export default function RepairsPage() {
                     )}
                   </div>
 
-                  {/* 右：日時・ボタン */}
                   <div className="flex sm:flex-col items-center sm:items-end gap-2 shrink-0">
                     <span className="text-xs text-gray-400">{formatDateTime(sub.createdAt)}</span>
                     <Link
