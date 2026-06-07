@@ -695,6 +695,8 @@ ${symptomMessages}
 
 // ─── 1. ステータス更新API ────────────────────────────────────────
 forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const { formId, submissionId } = c.req.param();
     const body = await c.req.json<{
@@ -730,6 +732,8 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => 
 
 // ─── 2. 追跡番号登録＋LINE通知API ────────────────────────────────
 forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const { formId, submissionId } = c.req.param();
     const body = await c.req.json<{ type: 'outbound' | 'inbound' | 'hq'; tracking_number: string }>();
@@ -796,6 +800,8 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) =
 
 // ─── 3. 返信テンプレ生成API ──────────────────────────────────────
 forms.get('/api/forms/:formId/submissions/:submissionId/reply-template', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const { formId, submissionId } = c.req.param();
     const type = c.req.query('type') ?? '';
@@ -817,6 +823,8 @@ forms.get('/api/forms/:formId/submissions/:submissionId/reply-template', async (
 
 // ─── 4. LINE返信送信API ──────────────────────────────────────────
 forms.post('/api/forms/:formId/submissions/:submissionId/send-reply', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const { formId, submissionId } = c.req.param();
     const body = await c.req.json<{
@@ -866,6 +874,8 @@ forms.post('/api/forms/:formId/submissions/:submissionId/send-reply', async (c) 
 
 // ─── 5. リマインド送信API ────────────────────────────────────────
 forms.post('/api/forms/:formId/submissions/:submissionId/remind', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const { formId, submissionId } = c.req.param();
 
