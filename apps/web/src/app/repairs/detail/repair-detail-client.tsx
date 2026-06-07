@@ -8,7 +8,7 @@ import Header from '@/components/layout/header'
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
 const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
-const HQ_STATUS_OPTIONS = ['未申請', '申請済み', '審査中', '承認済み', '本社に返送済み']
+const HQ_STATUS_OPTIONS = ['未申請', '申請済み', '審査中', '承認済み', '本社に返送済み', 'キャンセル', '不良症状なし', '有償修理']
 const INVENTORY_OPTIONS = ['本社交換品', 'ブライアン新品']
 const CUSTOMER_OPTIONS = ['ヴァリエ', '4works', 'OZALLY', '岡', 'AOT', 'Fライン', '対象外']
 

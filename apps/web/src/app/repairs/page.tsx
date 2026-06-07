@@ -28,6 +28,9 @@ const HQ_STATUS_COLORS: Record<string, string> = {
   '審査中':        'bg-yellow-100 text-yellow-700',
   '承認済み':      'bg-green-100 text-green-700',
   '本社に返送済み': 'bg-purple-100 text-purple-700',
+  'キャンセル':    'bg-gray-100 text-gray-500',
+  '不良症状なし':  'bg-gray-100 text-gray-500',
+  '有償修理':      'bg-amber-100 text-amber-700',
 }
 
 interface Submission {
