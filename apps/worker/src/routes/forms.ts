@@ -95,14 +95,30 @@ function serializeForm(
   };
 }
 
-function serializeSubmission(row: DbFormSubmission & { friend_name?: string | null }) {
+function serializeSubmission(row: (DbFormSubmission & { friend_name?: string | null }) & Record<string, unknown>) {
   return {
     id: row.id,
     formId: row.form_id,
     friendId: row.friend_id,
-    friendName: row.friend_name || null,
+    friendName: (row.friend_name as string | null) || null,
     data: JSON.parse(row.data || '{}') as Record<string, unknown>,
     createdAt: row.created_at,
+    our_status: row.our_status as string | undefined,
+    hq_status: row.hq_status as string | undefined,
+    return_type: row.return_type as string | null | undefined,
+    tracking_number_inbound: row.tracking_number_inbound as string | null | undefined,
+    tracking_number_outbound: row.tracking_number_outbound as string | null | undefined,
+    tracking_number_hq: row.tracking_number_hq as string | null | undefined,
+    shipping_cost_inbound: row.shipping_cost_inbound as number | null | undefined,
+    shipping_cost_outbound: row.shipping_cost_outbound as number | null | undefined,
+    shipping_cost_hq: row.shipping_cost_hq as number | null | undefined,
+    estimated_delivery_date: row.estimated_delivery_date as string | null | undefined,
+    reply_notification_sent_at: row.reply_notification_sent_at as string | null | undefined,
+    video_reminder_sent_at: row.video_reminder_sent_at as string | null | undefined,
+    admin_memo: row.admin_memo as string | null | undefined,
+    sent_serial_number: row.sent_serial_number as string | null | undefined,
+    hq_tracking_number: row.hq_tracking_number as string | null | undefined,
+    inventory_type: row.inventory_type as string | null | undefined,
   };
 }
 
@@ -704,6 +720,9 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => 
       hq_status?: string;
       return_type?: string;
       admin_memo?: string;
+      sent_serial_number?: string;
+      hq_tracking_number?: string;
+      inventory_type?: string;
     }>();
 
     const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
@@ -715,6 +734,9 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => 
     if (body.hq_status !== undefined) { sets.push('hq_status = ?'); bindings.push(body.hq_status); }
     if (body.return_type !== undefined) { sets.push('return_type = ?'); bindings.push(body.return_type); }
     if (body.admin_memo !== undefined) { sets.push('admin_memo = ?'); bindings.push(body.admin_memo); }
+    if (body.sent_serial_number !== undefined) { sets.push('sent_serial_number = ?'); bindings.push(body.sent_serial_number); }
+    if (body.hq_tracking_number !== undefined) { sets.push('hq_tracking_number = ?'); bindings.push(body.hq_tracking_number); }
+    if (body.inventory_type !== undefined) { sets.push('inventory_type = ?'); bindings.push(body.inventory_type); }
 
     if (sets.length === 0) return c.json({ success: false, error: 'No fields to update' }, 400);
 
@@ -736,7 +758,12 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) =
   if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
   try {
     const { formId, submissionId } = c.req.param();
-    const body = await c.req.json<{ type: 'outbound' | 'inbound' | 'hq'; tracking_number: string }>();
+    const body = await c.req.json<{
+      type: 'outbound' | 'inbound' | 'hq';
+      tracking_number: string;
+      shipping_cost?: number;
+      estimated_delivery_date?: string;
+    }>();
 
     if (!body.type || !body.tracking_number) {
       return c.json({ success: false, error: 'type and tracking_number are required' }, 400);
@@ -749,9 +776,17 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) =
     const sets = [col + ' = ?'];
     const bindings: unknown[] = [body.tracking_number];
 
+    if (body.shipping_cost !== undefined) {
+      sets.push(`shipping_cost_${body.type} = ?`);
+      bindings.push(body.shipping_cost);
+    }
+    if (body.estimated_delivery_date !== undefined) {
+      sets.push('estimated_delivery_date = ?');
+      bindings.push(body.estimated_delivery_date);
+    }
     if (body.type === 'outbound') {
-      sets.push('our_status = ?');
-      bindings.push('発送済み');
+      sets.push('our_status = ?', 'reply_notification_sent_at = ?');
+      bindings.push('追跡番号連絡済み', jstNow());
     }
 
     bindings.push(submissionId);
@@ -809,14 +844,65 @@ forms.get('/api/forms/:formId/submissions/:submissionId/reply-template', async (
     const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
     if (!row) return c.json({ success: false, error: 'Submission not found' }, 404);
 
-    const data = JSON.parse(String(row.data ?? '{}')) as Record<string, unknown>;
-    const template = buildReplyTemplate(type, data, submissionId, String(row.created_at ?? ''));
+    const tplRow = await c.env.DB.prepare('SELECT content FROM reply_templates WHERE type = ?')
+      .bind(type)
+      .first<{ content: string }>();
+
+    let template: string;
+    if (tplRow) {
+      const data = JSON.parse(String(row.data ?? '{}')) as Record<string, unknown>;
+      const memberName = String(data.member_name ?? data.recipient_name ?? '');
+      const receiptNumber = buildReceiptNumber(submissionId, String(row.created_at ?? ''));
+      const failureDesc = String((data as Record<string, unknown>).failure_description ?? '');
+      const symptomGuide = getSymptomMessages(failureDesc).join('\n\n');
+      template = tplRow.content
+        .replace(/\{name\}/g, memberName)
+        .replace(/\{receipt_number\}/g, receiptNumber)
+        .replace(/\{symptom_guide\}/g, symptomGuide);
+    } else {
+      const data = JSON.parse(String(row.data ?? '{}')) as Record<string, unknown>;
+      template = buildReplyTemplate(type, data, submissionId, String(row.created_at ?? ''));
+    }
 
     if (!template) return c.json({ success: false, error: 'Unknown template type' }, 400);
 
     return c.json({ success: true, data: { template } });
   } catch (err) {
     console.error('GET /reply-template error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── テンプレ一覧取得API ─────────────────────────────────────────
+forms.get('/api/forms/templates', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  try {
+    const result = await c.env.DB.prepare('SELECT * FROM reply_templates ORDER BY id').all<{
+      id: string; name: string; type: string; content: string; created_at: string; updated_at: string;
+    }>();
+    return c.json({ success: true, data: result.results });
+  } catch (err) {
+    console.error('GET /api/forms/templates error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ─── テンプレ更新API ─────────────────────────────────────────────
+forms.patch('/api/forms/templates/:type', async (c) => {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (apiKey !== c.env.API_KEY) return c.json({ success: false, error: 'Unauthorized' }, 401);
+  try {
+    const type = c.req.param('type');
+    const body = await c.req.json<{ content: string }>();
+    if (!body.content) return c.json({ success: false, error: 'content is required' }, 400);
+    const now = jstNow();
+    await c.env.DB.prepare('UPDATE reply_templates SET content = ?, updated_at = ? WHERE type = ?')
+      .bind(body.content, now, type)
+      .run();
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('PATCH /api/forms/templates/:type error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });

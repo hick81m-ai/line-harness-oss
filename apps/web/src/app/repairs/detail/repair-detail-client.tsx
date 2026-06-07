@@ -7,17 +7,19 @@ import Header from '@/components/layout/header'
 
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
-const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送受領済み', '発送済み', '完了']
+const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了']
 const HQ_STATUS_OPTIONS = ['未申請', '申請済み', '審査中', '承認済み', '本社に返送済み']
+const INVENTORY_OPTIONS = ['本社交換品', 'ブライアン新品']
 
 const OUR_STATUS_COLORS: Record<string, string> = {
-  '受付済み':    'bg-gray-100 text-gray-700',
-  '動画依頼済み': 'bg-blue-100 text-blue-700',
-  '動画受領済み': 'bg-cyan-100 text-cyan-700',
-  '返送依頼済み': 'bg-orange-100 text-orange-700',
-  '返送受領済み': 'bg-purple-100 text-purple-700',
-  '発送済み':    'bg-green-100 text-green-700',
-  '完了':       'bg-emerald-100 text-emerald-800',
+  '受付済み':        'bg-gray-100 text-gray-700',
+  '動画依頼済み':    'bg-blue-100 text-blue-700',
+  '動画受領済み':    'bg-cyan-100 text-cyan-700',
+  '返送依頼済み':    'bg-orange-100 text-orange-700',
+  '返送品受領済み':  'bg-purple-100 text-purple-700',
+  '発送済み':        'bg-green-100 text-green-700',
+  '追跡番号連絡済み': 'bg-teal-100 text-teal-700',
+  '完了':            'bg-emerald-100 text-emerald-800',
 }
 
 const HQ_STATUS_COLORS: Record<string, string> = {
@@ -41,8 +43,23 @@ interface Submission {
   tracking_number_inbound?: string | null
   tracking_number_outbound?: string | null
   tracking_number_hq?: string | null
+  shipping_cost_inbound?: number | null
+  shipping_cost_outbound?: number | null
+  shipping_cost_hq?: number | null
+  estimated_delivery_date?: string | null
   video_reminder_sent_at?: string | null
   admin_memo?: string | null
+  sent_serial_number?: string | null
+  hq_tracking_number?: string | null
+  inventory_type?: string | null
+  reply_notification_sent_at?: string | null
+}
+
+interface ReplyTemplate {
+  id: string
+  name: string
+  type: string
+  content: string
 }
 
 function buildReceiptNumber(sub: Submission): string {
@@ -88,6 +105,13 @@ function Toast({ message, onClose }: { message: string; onClose: () => void }) {
   )
 }
 
+const TEMPLATE_TYPES = [
+  { type: 'video_request', label: '動画依頼' },
+  { type: 'return_request_exchange', label: '返送依頼（交換）' },
+  { type: 'return_request_inspection', label: '返送依頼（検証）' },
+  { type: 'shipping_complete', label: '発送完了' },
+]
+
 export default function RepairDetailClient({ id }: { id: string }) {
   const router = useRouter()
   const submissionId = id
@@ -101,18 +125,47 @@ export default function RepairDetailClient({ id }: { id: string }) {
   const [returnType, setReturnType] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const [trackInbound, setTrackInbound] = useState('')
-  const [trackOutbound, setTrackOutbound] = useState('')
-  const [trackHq, setTrackHq] = useState('')
+  // tracking
+  const [trackData, setTrackData] = useState({
+    inbound:  { number: '', cost: '', date: '' },
+    outbound: { number: '', cost: '', date: '' },
+    hq:       { number: '', cost: '', date: '' },
+  })
   const [savingTrack, setSavingTrack] = useState<'inbound' | 'outbound' | 'hq' | null>(null)
 
+  // shipping product
+  const [sentSerial, setSentSerial] = useState('')
+  const [hqTrackNum, setHqTrackNum] = useState('')
+  const [inventoryType, setInventoryType] = useState('')
+  const [savingShipping, setSavingShipping] = useState(false)
+
+  // reply
   const [replyText, setReplyText] = useState('')
   const [sending, setSending] = useState(false)
 
+  // memo
   const [memo, setMemo] = useState('')
   const [savingMemo, setSavingMemo] = useState(false)
 
+  // templates
+  const [templates, setTemplates] = useState<ReplyTemplate[]>([])
+  const [editingTemplates, setEditingTemplates] = useState<Record<string, string>>({})
+  const [activeTemplateTab, setActiveTemplateTab] = useState('video_request')
+  const [savingTemplate, setSavingTemplate] = useState(false)
+
   const showToast = useCallback((msg: string) => setToast(msg), [])
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      const res = await fetchApi<{ success: boolean; data: ReplyTemplate[] }>('/api/forms/templates')
+      if (res.success) {
+        setTemplates(res.data)
+        const map: Record<string, string> = {}
+        for (const t of res.data) map[t.type] = t.content
+        setEditingTemplates(map)
+      }
+    } catch { /* silent */ }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -131,17 +184,25 @@ export default function RepairDetailClient({ id }: { id: string }) {
           setOurStatus(s.our_status ?? '受付済み')
           setHqStatus(s.hq_status ?? '未申請')
           setReturnType(s.return_type ?? '')
-          setTrackInbound(s.tracking_number_inbound ?? '')
-          setTrackOutbound(s.tracking_number_outbound ?? '')
-          setTrackHq(s.tracking_number_hq ?? '')
+          setTrackData({
+            inbound:  { number: s.tracking_number_inbound ?? '', cost: String(s.shipping_cost_inbound ?? ''), date: '' },
+            outbound: { number: s.tracking_number_outbound ?? '', cost: String(s.shipping_cost_outbound ?? ''), date: s.estimated_delivery_date ?? '' },
+            hq:       { number: s.tracking_number_hq ?? '', cost: String(s.shipping_cost_hq ?? ''), date: '' },
+          })
           setMemo(s.admin_memo ?? '')
+          setSentSerial(s.sent_serial_number ?? '')
+          setHqTrackNum(s.hq_tracking_number ?? '')
+          setInventoryType(s.inventory_type ?? '')
         }
       }
     } catch { /* silent */ }
     setLoading(false)
   }, [submissionId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    loadTemplates()
+  }, [load, loadTemplates])
 
   async function saveStatus() {
     if (!sub) return
@@ -163,19 +224,42 @@ export default function RepairDetailClient({ id }: { id: string }) {
 
   async function saveTracking(type: 'inbound' | 'outbound' | 'hq') {
     if (!sub) return
-    const number = type === 'inbound' ? trackInbound : type === 'outbound' ? trackOutbound : trackHq
-    if (!number.trim()) return
+    const item = trackData[type]
+    if (!item.number.trim()) return
     setSavingTrack(type)
     try {
+      const payload: Record<string, unknown> = {
+        type,
+        tracking_number: item.number.trim(),
+      }
+      if (item.cost !== '' && item.cost !== 'null') payload.shipping_cost = Number(item.cost)
+      if (item.date) payload.estimated_delivery_date = item.date
       await fetchApi(`/api/forms/${FORM_ID}/submissions/${sub.id}/tracking`, {
         method: 'PATCH',
-        body: JSON.stringify({ type, tracking_number: number.trim() }),
+        body: JSON.stringify(payload),
       })
       const msg = type === 'outbound' ? '✅ 保存してLINEに通知しました' : '✅ 追跡番号を保存しました'
       showToast(msg)
       await load()
     } catch { showToast('❌ 保存に失敗しました') }
     setSavingTrack(null)
+  }
+
+  async function saveShipping() {
+    if (!sub) return
+    setSavingShipping(true)
+    try {
+      await fetchApi(`/api/forms/${FORM_ID}/submissions/${sub.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          sent_serial_number: sentSerial,
+          hq_tracking_number: hqTrackNum,
+          inventory_type: inventoryType,
+        }),
+      })
+      showToast('✅ 発送製品記録を保存しました')
+    } catch { showToast('❌ 保存に失敗しました') }
+    setSavingShipping(false)
   }
 
   async function loadTemplate(type: string) {
@@ -213,6 +297,20 @@ export default function RepairDetailClient({ id }: { id: string }) {
       showToast('✅ メモを保存しました')
     } catch { showToast('❌ 保存に失敗しました') }
     setSavingMemo(false)
+  }
+
+  async function saveTemplate() {
+    setSavingTemplate(true)
+    try {
+      const content = editingTemplates[activeTemplateTab] ?? ''
+      await fetchApi(`/api/forms/templates/${activeTemplateTab}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content }),
+      })
+      showToast('✅ テンプレを保存しました')
+      await loadTemplates()
+    } catch { showToast('❌ 保存に失敗しました') }
+    setSavingTemplate(false)
   }
 
   if (loading) {
@@ -261,6 +359,7 @@ export default function RepairDetailClient({ id }: { id: string }) {
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* 左カラム */}
         <div className="space-y-4">
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-3">基本情報</h2>
@@ -294,7 +393,9 @@ export default function RepairDetailClient({ id }: { id: string }) {
           </section>
         </div>
 
+        {/* 右カラム */}
         <div className="space-y-4">
+          {/* ステータス管理 */}
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">ステータス管理</h2>
             <div className="space-y-3">
@@ -366,27 +467,44 @@ export default function RepairDetailClient({ id }: { id: string }) {
             </div>
           </section>
 
+          {/* 追跡番号 */}
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">追跡番号</h2>
-            <div className="space-y-3">
-              {[
-                { key: 'inbound' as const, label: '受信追跡番号（ユーザー→弊社）', value: trackInbound, set: setTrackInbound, btnLabel: '保存' },
-                { key: 'outbound' as const, label: '発送追跡番号（弊社→ユーザー）', value: trackOutbound, set: setTrackOutbound, btnLabel: '保存して通知' },
-                { key: 'hq' as const, label: '本社追跡番号（弊社→本社）', value: trackHq, set: setTrackHq, btnLabel: '保存' },
-              ].map((item) => (
-                <div key={item.key}>
-                  <label className="block text-xs text-gray-500 mb-1">{item.label}</label>
+            <div className="space-y-4">
+              {([
+                { key: 'inbound' as const, label: '受信追跡番号（ユーザー→弊社）', costLabel: '着払い料金（円）', btnLabel: '保存' },
+                { key: 'outbound' as const, label: '発送追跡番号（弊社→ユーザー）', costLabel: '送料（円）', btnLabel: '保存して通知' },
+                { key: 'hq' as const, label: '本社追跡番号（弊社→本社）', costLabel: '送料（円）', btnLabel: '保存' },
+              ] as const).map((item) => (
+                <div key={item.key} className="border border-gray-100 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-gray-500 font-medium">{item.label}</p>
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      value={item.value}
-                      onChange={(e) => item.set(e.target.value)}
-                      placeholder="追跡番号を入力"
+                      value={trackData[item.key].number}
+                      onChange={(e) => setTrackData((prev) => ({ ...prev, [item.key]: { ...prev[item.key], number: e.target.value } }))}
+                      placeholder="追跡番号"
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                    <input
+                      type="number"
+                      value={trackData[item.key].cost === 'null' ? '' : trackData[item.key].cost}
+                      onChange={(e) => setTrackData((prev) => ({ ...prev, [item.key]: { ...prev[item.key], cost: e.target.value } }))}
+                      placeholder={item.costLabel}
+                      className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <label className="text-xs text-gray-500 whitespace-nowrap">お届け予定日</label>
+                    <input
+                      type="date"
+                      value={trackData[item.key].date}
+                      onChange={(e) => setTrackData((prev) => ({ ...prev, [item.key]: { ...prev[item.key], date: e.target.value } }))}
                       className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
                     />
                     <button
                       onClick={() => saveTracking(item.key)}
-                      disabled={savingTrack === item.key || !item.value.trim()}
+                      disabled={savingTrack === item.key || !trackData[item.key].number.trim()}
                       className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors disabled:opacity-40 ${
                         item.key === 'outbound'
                           ? 'bg-blue-600 text-white hover:bg-blue-700'
@@ -401,15 +519,58 @@ export default function RepairDetailClient({ id }: { id: string }) {
             </div>
           </section>
 
+          {/* 発送製品記録 */}
+          <section className="bg-white rounded-lg border border-gray-200 p-5">
+            <h2 className="text-sm font-semibold text-gray-700 mb-4">発送製品記録</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">送付シリアル番号</label>
+                <input
+                  type="text"
+                  value={sentSerial}
+                  onChange={(e) => setSentSerial(e.target.value)}
+                  placeholder="シリアル番号を入力"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">本社発行追跡番号</label>
+                <input
+                  type="text"
+                  value={hqTrackNum}
+                  onChange={(e) => setHqTrackNum(e.target.value)}
+                  placeholder="本社発行の追跡番号"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">使用在庫区分</label>
+                <select
+                  value={inventoryType}
+                  onChange={(e) => setInventoryType(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">未選択</option>
+                  {INVENTORY_OPTIONS.map((o) => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={saveShipping}
+                disabled={savingShipping}
+                className="w-full py-2 rounded-lg bg-gray-800 text-white text-sm font-medium hover:bg-gray-700 disabled:opacity-40 transition-colors"
+              >
+                {savingShipping ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </section>
+
+          {/* 返信エリア */}
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-3">返信エリア</h2>
             <div className="flex flex-wrap gap-2 mb-3">
-              {[
-                { type: 'video_request', label: '動画依頼' },
-                { type: 'return_request_exchange', label: '返送依頼（交換）' },
-                { type: 'return_request_inspection', label: '返送依頼（検証）' },
-                { type: 'shipping_complete', label: '発送完了' },
-              ].map((t) => (
+              {TEMPLATE_TYPES.map((t) => (
                 <button
                   key={t.type}
                   onClick={() => loadTemplate(t.type)}
@@ -435,6 +596,45 @@ export default function RepairDetailClient({ id }: { id: string }) {
             </button>
           </section>
 
+          {/* テンプレ編集 */}
+          <section className="bg-white rounded-lg border border-gray-200 p-5">
+            <h2 className="text-sm font-semibold text-gray-700 mb-1">返信テンプレ編集</h2>
+            <p className="text-xs text-gray-400 mb-3">
+              変数：<code className="bg-gray-100 px-1 rounded">{'{name}'}</code> 会員名
+              <code className="bg-gray-100 px-1 rounded">{'{receipt_number}'}</code> 受付番号
+              <code className="bg-gray-100 px-1 rounded">{'{symptom_guide}'}</code> 症状別案内
+            </p>
+            <div className="flex gap-1 mb-3 flex-wrap">
+              {TEMPLATE_TYPES.map((t) => (
+                <button
+                  key={t.type}
+                  onClick={() => setActiveTemplateTab(t.type)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    activeTemplateTab === t.type
+                      ? 'bg-gray-800 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={editingTemplates[activeTemplateTab] ?? ''}
+              onChange={(e) => setEditingTemplates((prev) => ({ ...prev, [activeTemplateTab]: e.target.value }))}
+              rows={10}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-y font-mono"
+            />
+            <button
+              onClick={saveTemplate}
+              disabled={savingTemplate}
+              className="mt-2 w-full py-2 rounded-lg bg-gray-600 text-white text-sm font-medium hover:bg-gray-700 disabled:opacity-40 transition-colors"
+            >
+              {savingTemplate ? '保存中...' : 'テンプレを保存'}
+            </button>
+          </section>
+
+          {/* 管理メモ */}
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-3">管理メモ</h2>
             <textarea

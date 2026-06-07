@@ -7,23 +7,24 @@ import Header from '@/components/layout/header'
 
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
-const OUR_STATUSES = ['全件', '受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送受領済み', '発送済み', '完了']
+const OUR_STATUSES = ['全件', '受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了']
 
 const OUR_STATUS_COLORS: Record<string, string> = {
-  '受付済み':    'bg-gray-100 text-gray-700',
-  '動画依頼済み': 'bg-blue-100 text-blue-700',
-  '動画受領済み': 'bg-cyan-100 text-cyan-700',
-  '返送依頼済み': 'bg-orange-100 text-orange-700',
-  '返送受領済み': 'bg-purple-100 text-purple-700',
-  '発送済み':    'bg-green-100 text-green-700',
-  '完了':       'bg-emerald-100 text-emerald-800',
+  '受付済み':        'bg-gray-100 text-gray-700',
+  '動画依頼済み':    'bg-blue-100 text-blue-700',
+  '動画受領済み':    'bg-cyan-100 text-cyan-700',
+  '返送依頼済み':    'bg-orange-100 text-orange-700',
+  '返送品受領済み':  'bg-purple-100 text-purple-700',
+  '発送済み':        'bg-green-100 text-green-700',
+  '追跡番号連絡済み': 'bg-teal-100 text-teal-700',
+  '完了':            'bg-emerald-100 text-emerald-800',
 }
 
 const HQ_STATUS_COLORS: Record<string, string> = {
-  '未申請':     'bg-gray-100 text-gray-600',
-  '申請済み':   'bg-blue-100 text-blue-700',
-  '審査中':     'bg-yellow-100 text-yellow-700',
-  '承認済み':   'bg-green-100 text-green-700',
+  '未申請':        'bg-gray-100 text-gray-600',
+  '申請済み':      'bg-blue-100 text-blue-700',
+  '審査中':        'bg-yellow-100 text-yellow-700',
+  '承認済み':      'bg-green-100 text-green-700',
   '本社に返送済み': 'bg-purple-100 text-purple-700',
 }
 
@@ -37,6 +38,16 @@ interface Submission {
   our_status?: string
   hq_status?: string
   return_type?: string | null
+  tracking_number_inbound?: string | null
+  tracking_number_outbound?: string | null
+  tracking_number_hq?: string | null
+  shipping_cost_inbound?: number | null
+  shipping_cost_outbound?: number | null
+  shipping_cost_hq?: number | null
+  estimated_delivery_date?: string | null
+  sent_serial_number?: string | null
+  hq_tracking_number?: string | null
+  inventory_type?: string | null
 }
 
 function buildReceiptNumber(sub: Submission): string {
@@ -58,6 +69,60 @@ function StatusBadge({ status, colorMap }: { status: string; colorMap: Record<st
       {status}
     </span>
   )
+}
+
+function escapeCsv(val: unknown): string {
+  const s = val === null || val === undefined ? '' : String(val)
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`
+  }
+  return s
+}
+
+function downloadCsv(submissions: Submission[]) {
+  const headers = [
+    '受付番号', '申請日時', 'LINE名', '会員名', '会員ID', 'シリアル番号', '故障症状',
+    '弊社ステータス', '本社ステータス', '返送種別',
+    '着払い料金', '送料(弊社→ユーザー)', '送料(弊社→本社)', 'お届け予定日',
+    '送付シリアル番号', '本社発行追跡番号', '在庫区分',
+    '郵便番号', '住所', '宛名', '電話番号', '備考',
+  ]
+  const rows = submissions.map((sub) => {
+    const d = sub.data
+    return [
+      buildReceiptNumber(sub),
+      formatDateTime(sub.createdAt),
+      sub.friendName,
+      d.member_name,
+      d.member_id,
+      d.serial_number,
+      d.failure_description,
+      sub.our_status ?? '受付済み',
+      sub.hq_status ?? '未申請',
+      sub.return_type === 'exchange' ? '交換確定' : sub.return_type === 'inspection' ? '弊社検証' : '',
+      sub.shipping_cost_inbound,
+      sub.shipping_cost_outbound,
+      sub.shipping_cost_hq,
+      sub.estimated_delivery_date,
+      sub.sent_serial_number,
+      sub.hq_tracking_number,
+      sub.inventory_type,
+      d.postal_code,
+      d.address,
+      d.recipient_name,
+      d.phone,
+      d.remarks,
+    ].map(escapeCsv).join(',')
+  })
+  const bom = '﻿'
+  const csv = bom + [headers.join(','), ...rows].join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `repairs_${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export default function RepairsPage() {
@@ -101,7 +166,19 @@ export default function RepairsPage() {
 
   return (
     <div>
-      <Header title="故障申請管理" description="Shaken故障申請の受付・対応状況を管理" />
+      <Header
+        title="故障申請管理"
+        description="Shaken故障申請の受付・対応状況を管理"
+        action={
+          <button
+            onClick={() => downloadCsv(submissions)}
+            disabled={submissions.length === 0}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+          >
+            CSVエクスポート
+          </button>
+        }
+      />
 
       {/* タブ */}
       <div className="overflow-x-auto mb-5">
