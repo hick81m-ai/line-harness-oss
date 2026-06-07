@@ -629,7 +629,7 @@ messages.push(buildMessage('flex', JSON.stringify(resultFlex)));
 async function getSubmissionWithFriend(db: D1Database, formId: string, submissionId: string) {
   const row = await db
     .prepare(
-      `SELECT fs.*, f.lineUserId as line_user_id_friend
+      `SELECT fs.*, f.line_user_id as line_user_id_friend
        FROM form_submissions fs
        LEFT JOIN friends f ON f.id = fs.friend_id
        WHERE fs.id = ? AND fs.form_id = ?`,
