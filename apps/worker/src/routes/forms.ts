@@ -119,6 +119,7 @@ function serializeSubmission(row: (DbFormSubmission & { friend_name?: string | n
     sent_serial_number: row.sent_serial_number as string | null | undefined,
     hq_tracking_number: row.hq_tracking_number as string | null | undefined,
     inventory_type: row.inventory_type as string | null | undefined,
+    customer: row.customer as string | null | undefined,
   };
 }
 
@@ -723,6 +724,7 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => 
       sent_serial_number?: string;
       hq_tracking_number?: string;
       inventory_type?: string;
+      customer?: string;
     }>();
 
     const row = await getSubmissionWithFriend(c.env.DB, formId, submissionId);
@@ -737,6 +739,7 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/status', async (c) => 
     if (body.sent_serial_number !== undefined) { sets.push('sent_serial_number = ?'); bindings.push(body.sent_serial_number); }
     if (body.hq_tracking_number !== undefined) { sets.push('hq_tracking_number = ?'); bindings.push(body.hq_tracking_number); }
     if (body.inventory_type !== undefined) { sets.push('inventory_type = ?'); bindings.push(body.inventory_type); }
+    if (body.customer !== undefined) { sets.push('customer = ?'); bindings.push(body.customer); }
 
     if (sets.length === 0) return c.json({ success: false, error: 'No fields to update' }, 400);
 
@@ -800,21 +803,88 @@ forms.patch('/api/forms/:formId/submissions/:submissionId/tracking', async (c) =
         try {
           const { LineClient } = await import('@line-crm/line-sdk');
           const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+          const trackingCode = body.tracking_number.replace(/[^0-9]/g, '');
+          const estimatedDate = body.estimated_delivery_date || '別途ご連絡';
           const flexContent = {
             type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              backgroundColor: '#FF8C00',
+              contents: [
+                { type: 'text', text: '交換品発送情報のご連絡', weight: 'bold', color: '#ffffff', size: 'md' },
+              ],
+            },
             body: {
               type: 'box',
               layout: 'vertical',
+              spacing: 'md',
               contents: [
-                { type: 'text', text: '📦 発送のお知らせ', weight: 'bold', size: 'lg' },
-                { type: 'text', text: '交換品を発送しました。', wrap: true, margin: 'md' },
-                { type: 'text', text: '追跡番号', weight: 'bold', margin: 'md' },
-                { type: 'text', text: body.tracking_number, wrap: true },
-                { type: 'text', text: 'ヤマト運輸にてご確認ください。', wrap: true, margin: 'md', color: '#888888', size: 'sm' },
+                {
+                  type: 'text',
+                  text: '早速ご対応いただきありがとうございます🙇\n弊社より交換品を発送いたしました☺️',
+                  wrap: true,
+                },
+                {
+                  type: 'box',
+                  layout: 'vertical',
+                  spacing: 'sm',
+                  contents: [
+                    {
+                      type: 'box', layout: 'baseline',
+                      contents: [
+                        { type: 'text', text: '🟠 お届け予定日', flex: 2, size: 'sm', weight: 'bold', color: '#555555' },
+                        { type: 'text', text: estimatedDate, flex: 3, size: 'sm', wrap: true },
+                      ],
+                    },
+                    {
+                      type: 'box', layout: 'baseline',
+                      contents: [
+                        { type: 'text', text: '🟠 追跡番号', flex: 2, size: 'sm', weight: 'bold', color: '#555555' },
+                        { type: 'text', text: body.tracking_number, flex: 3, size: 'sm', wrap: true },
+                      ],
+                    },
+                    {
+                      type: 'box', layout: 'baseline',
+                      contents: [
+                        { type: 'text', text: '🟠 運送会社', flex: 2, size: 'sm', weight: 'bold', color: '#555555' },
+                        { type: 'text', text: 'ヤマト運輸', flex: 3, size: 'sm' },
+                      ],
+                    },
+                  ],
+                },
+                {
+                  type: 'text',
+                  text: 'お受け取りのほど、よろしくお願いいたします🙇',
+                  wrap: true,
+                },
+                {
+                  type: 'text',
+                  text: '※ご確認いただくタイミングによっては、まだ情報が反映されていない場合がございます。その際は少し時間をおいて再度ご確認ください🙇',
+                  wrap: true,
+                  size: 'xs',
+                  color: '#888888',
+                },
+              ],
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'button',
+                  action: {
+                    type: 'uri',
+                    label: '追跡確認サイト（ヤマト運輸）',
+                    uri: `https://member.kms.kuronekoyamato.co.jp/parcel/detail?pno=${trackingCode}&uktHasKbn=02&refererType=03`,
+                  },
+                  style: 'primary',
+                  color: '#FF8C00',
+                },
               ],
             },
           };
-          await lineClient.pushMessage(lineUserId, [{ type: 'flex', altText: '📦 発送のお知らせ', contents: flexContent }]);
+          await lineClient.pushMessage(lineUserId, [{ type: 'flex', altText: '交換品発送情報のご連絡', contents: flexContent }]);
           await c.env.DB.prepare(
             `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, source, created_at) VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'admin', ?)`,
           )

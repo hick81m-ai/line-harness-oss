@@ -7,7 +7,7 @@ import Header from '@/components/layout/header'
 
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
-const OUR_STATUSES = ['全件', '受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了']
+const OUR_STATUSES = ['全件', '受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
 
 const OUR_STATUS_COLORS: Record<string, string> = {
   '受付済み':        'bg-gray-100 text-gray-700',
@@ -18,6 +18,8 @@ const OUR_STATUS_COLORS: Record<string, string> = {
   '発送済み':        'bg-green-100 text-green-700',
   '追跡番号連絡済み': 'bg-teal-100 text-teal-700',
   '完了':            'bg-emerald-100 text-emerald-800',
+  'キャンセル':      'bg-red-100 text-red-700',
+  '不良症状なし':    'bg-gray-100 text-gray-500',
 }
 
 const HQ_STATUS_COLORS: Record<string, string> = {
@@ -48,6 +50,7 @@ interface Submission {
   sent_serial_number?: string | null
   hq_tracking_number?: string | null
   inventory_type?: string | null
+  customer?: string | null
 }
 
 function buildReceiptNumber(sub: Submission): string {
@@ -82,7 +85,7 @@ function escapeCsv(val: unknown): string {
 function downloadCsv(submissions: Submission[]) {
   const headers = [
     '受付番号', '申請日時', 'LINE名', '会員名', '会員ID', 'シリアル番号', '故障症状',
-    '弊社ステータス', '本社ステータス', '返送種別',
+    '弊社ステータス', '本社ステータス', '返送種別', 'カスタマー',
     '着払い料金', '送料(弊社→ユーザー)', '送料(弊社→本社)', 'お届け予定日',
     '送付シリアル番号', '本社発行追跡番号', '在庫区分',
     '郵便番号', '住所', '宛名', '電話番号', '備考',
@@ -100,6 +103,7 @@ function downloadCsv(submissions: Submission[]) {
       sub.our_status ?? '受付済み',
       sub.hq_status ?? '未申請',
       sub.return_type === 'exchange' ? '交換確定' : sub.return_type === 'inspection' ? '弊社検証' : '',
+      sub.customer,
       sub.shipping_cost_inbound,
       sub.shipping_cost_outbound,
       sub.shipping_cost_hq,

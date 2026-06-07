@@ -7,9 +7,10 @@ import Header from '@/components/layout/header'
 
 const FORM_ID = '49a84e34-831c-462c-b801-a30c44d46f57'
 
-const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了']
+const OUR_STATUS_OPTIONS = ['受付済み', '動画依頼済み', '動画受領済み', '返送依頼済み', '返送品受領済み', '発送済み', '追跡番号連絡済み', '完了', 'キャンセル', '不良症状なし']
 const HQ_STATUS_OPTIONS = ['未申請', '申請済み', '審査中', '承認済み', '本社に返送済み']
 const INVENTORY_OPTIONS = ['本社交換品', 'ブライアン新品']
+const CUSTOMER_OPTIONS = ['ヴァリエ', '4works', 'OZALLY', '岡', 'AOT', 'Fライン', '対象外']
 
 const OUR_STATUS_COLORS: Record<string, string> = {
   '受付済み':        'bg-gray-100 text-gray-700',
@@ -53,6 +54,7 @@ interface Submission {
   hq_tracking_number?: string | null
   inventory_type?: string | null
   reply_notification_sent_at?: string | null
+  customer?: string | null
 }
 
 interface ReplyTemplate {
@@ -123,6 +125,7 @@ export default function RepairDetailClient({ id }: { id: string }) {
   const [ourStatus, setOurStatus] = useState('')
   const [hqStatus, setHqStatus] = useState('')
   const [returnType, setReturnType] = useState('')
+  const [customer, setCustomer] = useState('')
   const [saving, setSaving] = useState(false)
 
   // tracking
@@ -193,6 +196,7 @@ export default function RepairDetailClient({ id }: { id: string }) {
           setSentSerial(s.sent_serial_number ?? '')
           setHqTrackNum(s.hq_tracking_number ?? '')
           setInventoryType(s.inventory_type ?? '')
+          setCustomer(s.customer ?? '')
         }
       }
     } catch { /* silent */ }
@@ -214,7 +218,7 @@ export default function RepairDetailClient({ id }: { id: string }) {
     try {
       await fetchApi(`/api/forms/${FORM_ID}/submissions/${sub.id}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ our_status: ourStatus, hq_status: hqStatus, return_type: returnType || undefined }),
+        body: JSON.stringify({ our_status: ourStatus, hq_status: hqStatus, return_type: returnType || undefined, customer: customer || undefined }),
       })
       showToast('✅ ステータスを更新しました')
       await load()
@@ -399,6 +403,20 @@ export default function RepairDetailClient({ id }: { id: string }) {
           <section className="bg-white rounded-lg border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">ステータス管理</h2>
             <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">カスタマー</label>
+                <select
+                  value={customer}
+                  onChange={(e) => setCustomer(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">（未選択）</option>
+                  {CUSTOMER_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs text-gray-500 mb-1">弊社ステータス</label>
                 <div className="flex gap-2">
