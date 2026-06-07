@@ -123,7 +123,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, c.env.GAS_WEBHOOK_URL);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -143,6 +143,7 @@ async function handleEvent(
   lineAccountId: string | null = null,
   workerUrl?: string,
   liffUrl?: string,
+  gasWebhookUrl?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -441,13 +442,15 @@ async function handleEvent(
       .run();
 
     // 画像・動画: GAS経由でDriveに保存（best-effort）
-    if ((msg.type === 'image' || msg.type === 'video') && env.GAS_WEBHOOK_URL) {
+    if ((msg.type === 'image' || msg.type === 'video') && gasWebhookUrl) {
+      const _gasWebhookUrl = gasWebhookUrl;
+      const _lineAccessToken = lineAccessToken;
       (async () => {
         try {
           // 1. LINE Content APIからダウンロード
           const contentRes = await fetch(
             `https://api-data.line.me/v2/bot/message/${msg.id}/content`,
-            { headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` } },
+            { headers: { Authorization: `Bearer ${_lineAccessToken}` } },
           );
           if (!contentRes.ok) return;
           const buffer = await contentRes.arrayBuffer();
@@ -486,7 +489,7 @@ async function handleEvent(
           }
 
           // 5. GASにPOST
-          const gasRes = await fetch(env.GAS_WEBHOOK_URL!, {
+          const gasRes = await fetch(_gasWebhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
